@@ -215,7 +215,13 @@ a{color:var(--teal)}
       <div id="onbJoin" style="display:none">
         <label class="gateLab">Código da clínica</label>
         <input class="gateInp" id="onbCodigo" placeholder="Ex: BEMCUIDAR7X2" style="text-transform:uppercase">
-        <p style="font-size:12px;color:var(--ink-soft);margin-top:8px">Peça o código de convite pra quem já usa o Clara na sua clínica (fica em Configurações).</p>
+        <label class="gateLab">Seu perfil de acesso</label>
+        <select class="gateInp" id="onbPerfil">
+          <option value="profissional">Profissional (médico, dentista, psicólogo…)</option>
+          <option value="recepcao">Recepção</option>
+          <option value="financeiro">Financeiro</option>
+        </select>
+        <p style="font-size:12px;color:var(--ink-soft);margin-top:8px">Peça o código de convite pra quem já usa o Agenda+ na sua clínica (fica em Configurações → Equipe). O admin pode mudar seu perfil depois.</p>
       </div>
       <button class="gateBtn" onclick="doOnboard()">Continuar</button>
       <div class="gateError" id="onbErr"></div>
@@ -225,6 +231,8 @@ a{color:var(--teal)}
     <div class="gateFoot"><a onclick="showCfg(true)">Configurar conexão (Supabase)</a></div>
   </div>
 </div>
+
+<div id="publico" style="display:none;min-height:100vh;background:var(--paper)"></div>
 
 <div class="modalBg" id="cfgModal">
   <div class="modal">
@@ -246,9 +254,11 @@ a{color:var(--teal)}
     <button class="navItem" data-tab="dashboard" onclick="goTab('dashboard')"><span class="ic">◆</span>Painel</button>
     <button class="navItem" data-tab="agenda" onclick="goTab('agenda')"><span class="ic">▤</span>Agenda</button>
     <button class="navItem" data-tab="pacientes" onclick="goTab('pacientes')"><span class="ic">☺</span>Pacientes</button>
+    <button class="navItem" data-tab="convenios" onclick="goTab('convenios')"><span class="ic">✚</span>Convênios</button>
     <button class="navItem" data-tab="financeiro" onclick="goTab('financeiro')"><span class="ic">$</span>Financeiro</button>
     <button class="navItem" data-tab="estoque" onclick="goTab('estoque')"><span class="ic">▦</span>Estoque</button>
     <button class="navItem" data-tab="procedimentos" onclick="goTab('procedimentos')"><span class="ic">✚</span>Procedimentos</button>
+    <button class="navItem" data-tab="marketing" onclick="goTab('marketing')"><span class="ic">◈</span>Marketing</button>
     <button class="navItem" data-tab="relatorios" onclick="goTab('relatorios')"><span class="ic">▲</span>Relatórios</button>
     <button class="navItem" data-tab="config" onclick="goTab('config')"><span class="ic">⚙</span>Configurações</button>
     <div class="sbFoot">
@@ -281,6 +291,11 @@ create table if not exists painel(grp text not null, k text not null, value json
 alter table painel enable row level security;
 create table if not exists workspace_members(user_id uuid references auth.users(id) primary key, grp text not null, role text default 'admin', created_at timestamptz default now());
 alter table workspace_members enable row level security;
+alter table workspace_members add column if not exists email text;
+-- perfis aceitos: 'admin' (tudo), 'profissional' (agenda+prontuário+procedimentos), 'recepcao' (agenda+pacientes+estoque+marketing, sem prontuário clínico), 'financeiro' (financeiro+convênios+relatórios)
+create policy wm_admin_select_all on workspace_members for select using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+create policy wm_admin_update on workspace_members for update using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin')) with check (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+create policy wm_admin_delete on workspace_members for delete using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
 create table if not exists clinicas(grp text primary key, nome text not null, logo text, cor text, created_at timestamptz default now());
 alter table clinicas enable row level security;
 
@@ -290,6 +305,22 @@ create policy wm_own_insert on workspace_members for insert with check (user_id=
 create policy clinicas_select_public on clinicas for select using (true);
 create policy clinicas_insert_auth on clinicas for insert with check (auth.uid() is not null);
 create policy clinicas_update_members on clinicas for update using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+
+-- Tabela única pra tudo que vem de gente SEM login (agendamento online, pesquisa de satisfação/NPS):
+-- fica separada da tabela "painel" de propósito, pra não precisar afrouxar a RLS de dados internos da clínica.
+create table if not exists solicitacoes_publicas(id uuid default gen_random_uuid() primary key, grp text not null, tipo text not null, payload jsonb not null, status text default 'pendente', created_at timestamptz default now());
+alter table solicitacoes_publicas enable row level security;
+create policy sp_insert_public on solicitacoes_publicas for insert with check (true);
+create policy sp_select_members on solicitacoes_publicas for select using (grp in (select grp from workspace_members where user_id=auth.uid()));
+create policy sp_update_members on solicitacoes_publicas for update using (grp in (select grp from workspace_members where user_id=auth.uid()));
+create policy sp_delete_members on solicitacoes_publicas for delete using (grp in (select grp from workspace_members where user_id=auth.uid()));
+
+-- Portal do paciente: um "snapshot" somente-leitura publicado pela equipe, acessível por um token
+-- imprevisível (link mágico). Ninguém lista os tokens dos outros; só quem tem o link exato lê o próprio.
+create table if not exists portais_paciente(token text primary key, grp text not null, paciente_id text not null, dados jsonb not null, expira_em timestamptz, created_at timestamptz default now());
+alter table portais_paciente enable row level security;
+create policy pp_select_public on portais_paciente for select using (expira_em is null or expira_em > now());
+create policy pp_write_members on portais_paciente for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
 */
 let sb=null, sbUser=null, groupId=null, clinicaNome='';
 function initSupabase(){
@@ -345,12 +376,13 @@ function traduzErro(m){
 }
 async function doLogout(){try{await sb.auth.signOut();}catch(e){} sbUser=null;groupId=null;location.reload();}
 
+let meuPerfil='admin';
 async function afterLogin(){
   const {data}=await sb.auth.getSession();
   sbUser=data&&data.session?data.session.user:null;
   if(!sbUser) return;
-  const {data:wm}=await sb.from('workspace_members').select('grp').eq('user_id',sbUser.id).maybeSingle();
-  if(wm&&wm.grp){ groupId=wm.grp; await bootApp(); }
+  const {data:wm}=await sb.from('workspace_members').select('grp,role').eq('user_id',sbUser.id).maybeSingle();
+  if(wm&&wm.grp){ groupId=wm.grp; meuPerfil=wm.role||'admin'; await bootApp(); }
   else{
     document.getElementById('gateAuth').style.display='none'; document.getElementById('gateOnboard').style.display='block';
     if(prefillCodigo){ setOnbTab('join'); $('onbCodigo').value=prefillCodigo; }
@@ -379,19 +411,20 @@ async function doOnboard(){
       const codigo=slugCodigo(nome);
       const {error:e1}=await sb.from('clinicas').insert({grp:codigo,nome});
       if(e1) throw e1;
-      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:'admin'});
+      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:'admin',email:sbUser.email});
       if(e2) throw e2;
-      groupId=codigo; clinicaNome=nome;
+      groupId=codigo; clinicaNome=nome; meuPerfil='admin';
       await store.set('clinica:info',JSON.stringify({nome,codigo}));
     } else {
       const codigo=document.getElementById('onbCodigo').value.trim().toUpperCase();
+      const perfil=document.getElementById('onbPerfil').value||'profissional';
       if(!codigo){err.textContent='Digite o código da clínica.';err.style.display='block';return;}
       const {data:cli,error:e0}=await sb.from('clinicas').select('nome').eq('grp',codigo).maybeSingle();
       if(e0) throw e0;
       if(!cli){err.textContent='Código não encontrado. Confira com a sua clínica.';err.style.display='block';return;}
-      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:'equipe'});
+      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:perfil,email:sbUser.email});
       if(e2) throw e2;
-      groupId=codigo; clinicaNome=cli.nome;
+      groupId=codigo; clinicaNome=cli.nome; meuPerfil=perfil;
     }
     await bootApp();
   }catch(e){err.textContent=traduzErro(e.message);err.style.display='block';}
@@ -420,6 +453,61 @@ const store={
     catch(e){ showToast('Não foi possível salvar agora. Verifique sua internet.','err'); }
   }
 };
+
+/* ---- solicitações públicas (agendamento online + NPS), sem exigir login do paciente ---- */
+async function publicInsert(grpAlvo,tipo,payload){
+  if(demoMode||!sb) return {ok:true,demo:true};
+  try{
+    const {error}=await sb.from('solicitacoes_publicas').insert({grp:grpAlvo,tipo,payload});
+    if(error) throw error;
+    return {ok:true};
+  }catch(e){ return {ok:false,erro:e.message}; }
+}
+async function loadSolicitacoes(tipo){
+  if(demoMode||!sb||!groupId) return [];
+  try{
+    const {data,error}=await sb.from('solicitacoes_publicas').select('*').eq('grp',groupId).eq('tipo',tipo).order('created_at',{ascending:false});
+    if(error) throw error;
+    return data||[];
+  }catch(e){ return []; }
+}
+async function atualizarSolicitacao(id,status){
+  if(demoMode||!sb) return;
+  try{ await sb.from('solicitacoes_publicas').update({status}).eq('id',id); }catch(e){}
+}
+async function excluirSolicitacao(id){
+  if(demoMode||!sb) return;
+  try{ await sb.from('solicitacoes_publicas').delete().eq('id',id); }catch(e){}
+}
+
+/* ---- portal do paciente: link mágico somente-leitura ---- */
+function gerarToken(){ return uid()+uid(); }
+async function publicarPortalPaciente(pacienteId,dados,diasValidade){
+  const token=gerarToken();
+  const expira=new Date(Date.now()+(diasValidade||30)*86400000).toISOString();
+  if(demoMode||!sb) return token;
+  try{ await sb.from('portais_paciente').upsert({token,grp:groupId,paciente_id:pacienteId,dados,expira_em:expira}); }catch(e){}
+  return token;
+}
+async function lerPortalPaciente(token){
+  if(!sb) return null;
+  try{
+    const {data,error}=await sb.from('portais_paciente').select('*').eq('token',token).maybeSingle();
+    if(error) throw error;
+    if(!data) return null;
+    if(data.expira_em && new Date(data.expira_em)<new Date()) return null;
+    return data;
+  }catch(e){ return null; }
+}
+
+/* ---- auditoria (LGPD): quem fez o quê, quando ---- */
+async function registrarAuditoria(acao,detalhe){
+  try{
+    const lista=await loadList('auditoria');
+    lista.unshift({id:uid(),quando:new Date().toISOString(),usuario:(sbUser&&sbUser.email)||'—',acao,detalhe:detalhe||''});
+    await saveList('auditoria',lista.slice(0,500));
+  }catch(e){}
+}
 
 /* ---- modo demonstração: sem Supabase, dados de exemplo salvos só no seu navegador ---- */
 async function enterDemo(){
@@ -485,19 +573,45 @@ function exportarCSV(nomeArquivo,colunas,linhas){
 <script>
 /* ================= BOOT / ROUTER ================= */
 let currentTab='dashboard';
-const TAB_TITLES={dashboard:'Painel',agenda:'Agenda',pacientes:'Pacientes',financeiro:'Financeiro',estoque:'Estoque',procedimentos:'Procedimentos',relatorios:'Relatórios',config:'Configurações'};
+const TAB_TITLES={dashboard:'Painel',agenda:'Agenda',pacientes:'Pacientes',convenios:'Convênios',financeiro:'Financeiro',estoque:'Estoque',procedimentos:'Procedimentos',marketing:'Marketing',relatorios:'Relatórios',config:'Configurações'};
+
+/* ---- Perfis de acesso: quem vê o quê. 'admin' sempre tem acesso a tudo. ---- */
+const CAP_TABS={
+  dashboard:['admin','profissional','recepcao','financeiro'],
+  agenda:['admin','profissional','recepcao','financeiro'],
+  pacientes:['admin','profissional','recepcao'],
+  convenios:['admin','financeiro'],
+  financeiro:['admin','financeiro'],
+  estoque:['admin','profissional','recepcao'],
+  procedimentos:['admin','profissional'],
+  marketing:['admin','recepcao'],
+  relatorios:['admin','financeiro'],
+  config:['admin']
+};
+function podeVerAba(tab){ return meuPerfil==='admin' || !CAP_TABS[tab] || CAP_TABS[tab].includes(meuPerfil); }
+// prontuário clínico (evolução/anexos) é restrito: recepção nunca vê, por sigilo profissional (LGPD/CFP/CFM).
+function podeVerProntuario(){ return meuPerfil==='admin' || meuPerfil==='profissional'; }
+function aplicarPermissoesNav(){
+  document.querySelectorAll('.navItem[data-tab]').forEach(b=>{
+    const ok=podeVerAba(b.dataset.tab);
+    b.style.display=ok?'':'none';
+  });
+}
 
 async function bootApp(){
   document.getElementById('gate').style.display='none';
   document.getElementById('app').classList.add('on');
-  $('sbUserEmail').textContent=sbUser.email;
+  $('sbUserEmail').textContent=sbUser.email+(meuPerfil?' · '+PERFIL_LABEL(meuPerfil):'');
   if(!clinicaNome){ try{ const info=JSON.parse(await store.get('clinica:info')||'{}'); clinicaNome=info.nome||groupId; }catch(e){ clinicaNome=groupId; } }
   $('sbClinicName').textContent=clinicaNome;
   const cfg=await loadConfigClinica();
   aplicarMarca(cfg);
+  aplicarPermissoesNav();
   try{ localStorage.setItem('agendamais:lastBrand',JSON.stringify({codigo:groupId,nome:clinicaNome,logo:cfg.logo||'',cor:cfg.corPrincipal||''})); }catch(e){}
-  goTab('dashboard');
+  const primeiraPermitida=['dashboard','agenda','pacientes','financeiro','estoque','marketing'].find(podeVerAba)||'dashboard';
+  goTab(primeiraPermitida);
 }
+function PERFIL_LABEL(p){ return {admin:'Administrador(a)',profissional:'Profissional',recepcao:'Recepção',financeiro:'Financeiro'}[p]||p; }
 function aplicarMarca(cfg){
   const nome=cfg.nomeExibicao||clinicaNome||'Agenda+';
   ['sbName'].forEach(id=>{ if($(id)) $(id).textContent=nome; });
@@ -511,12 +625,13 @@ function aplicarMarca(cfg){
   });
 }
 function goTab(tab){
+  if(!podeVerAba(tab)){ showToast('Seu perfil não tem acesso a essa área.','err'); tab='dashboard'; }
   currentTab=tab;
   document.querySelectorAll('.navItem').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
   $('pageTitle').textContent=TAB_TITLES[tab]||'';
   $('topbarActs').innerHTML='';
   document.getElementById('sidebar').classList.remove('on');
-  const renderers={dashboard:renderDashboard,agenda:renderAgenda,pacientes:renderPacientes,financeiro:renderFinanceiro,estoque:renderEstoque,procedimentos:renderProcedimentos,relatorios:renderRelatorios,config:renderConfig};
+  const renderers={dashboard:renderDashboard,agenda:renderAgenda,pacientes:renderPacientes,convenios:renderConvenios,financeiro:renderFinanceiro,estoque:renderEstoque,procedimentos:renderProcedimentos,marketing:renderMarketing,relatorios:renderRelatorios,config:renderConfig};
   (renderers[tab]||renderDashboard)();
 }
 
@@ -580,6 +695,7 @@ function precoSugeridoAgenda(p){
 }
 const HORA_INI=7, HORA_FIM=20;
 
+let agendaSubTab='calendario';
 async function renderAgenda(){
   $('topbarActs').innerHTML=`<button class="btn sm" onclick="exportarAgendaCSV()">Exportar CSV</button> <button class="btn primary" onclick="abrirModalAgendamento()">+ Novo agendamento</button>`;
   $('content').innerHTML='<div class="empty">Carregando…</div>';
@@ -592,8 +708,19 @@ function exportarAgendaCSV(){
     {titulo:'Tipo',campo:'tipo'},{titulo:'Profissional',campo:'profissional'},{titulo:'Status',get:a=>statusLabel(a.status)}
   ],[...agendaData].sort((a,b)=>a.data.localeCompare(b.data)||a.hora.localeCompare(b.hora)));
 }
-function pintarAgenda(){
-  $('content').innerHTML=`<div class="agendaWrap"><div class="agendaCal">${miniCalHTML()}</div><div class="dayTimeline" id="dayTimeline">${dayTimelineHTML()}</div></div>`;
+function agendaTabsHTML(){
+  return `<div class="gateTabs" style="max-width:380px;margin-bottom:16px">
+    <button class="gateTab ${agendaSubTab==='calendario'?'on':''}" onclick="agendaSubTab='calendario';pintarAgenda()">Calendário</button>
+    <button class="gateTab ${agendaSubTab==='fila'?'on':''}" onclick="agendaSubTab='fila';pintarAgenda()">Solicitações & fila</button>
+  </div>`;
+}
+async function pintarAgenda(){
+  if(agendaSubTab==='fila'){
+    $('content').innerHTML=agendaTabsHTML()+'<div class="empty">Carregando…</div>';
+    $('content').innerHTML=agendaTabsHTML()+await pintarFilaEspera();
+    return;
+  }
+  $('content').innerHTML=`${agendaTabsHTML()}<div class="agendaWrap"><div class="agendaCal">${miniCalHTML()}</div><div class="dayTimeline" id="dayTimeline">${dayTimelineHTML()}</div></div>`;
 }
 function miniCalHTML(){
   const ref=agendaMesRef, y=ref.getFullYear(), m=ref.getMonth();
@@ -631,9 +758,26 @@ function apptCardHTML(a){
   return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${a.id}')">
     <div><div class="who">${a.pacienteNome}</div><div class="what">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''} · ${a.hora}</div></div>
     <div class="apptActs">
+      <button class="iconBtn" title="Teleconsulta" onclick="event.stopPropagation();iniciarTeleconsulta('${a.id}')">🎥</button>
       <button class="iconBtn" title="Lembrete WhatsApp" onclick="event.stopPropagation();lembreteWhats('${a.id}')">💬</button>
+      ${a.status==='atendido'?`<button class="iconBtn" title="Pedir avaliação (NPS)" onclick="event.stopPropagation();pedirAvaliacao('${a.id}')">⭐</button>`:''}
     </div>
   </div>`;
+}
+/* ---- Telemedicina: sala de vídeo real via Jitsi Meet (grátis, sem credencial) ---- */
+function salaJitsiDe(a){ return 'agendamais-'+groupId+'-'+a.id; }
+function linkTeleconsulta(a){ return 'https://meet.jit.si/'+salaJitsiDe(a); }
+function iniciarTeleconsulta(id){
+  const a=agendaData.find(x=>x.id===id); if(!a) return;
+  window.open(linkTeleconsulta(a),'_blank','noopener');
+  showToast('Sala de teleconsulta aberta. Copie o link abaixo pra mandar ao paciente.','ok');
+}
+function compartilharLinkTeleconsulta(id){
+  const a=agendaData.find(x=>x.id===id); if(!a) return;
+  const link=linkTeleconsulta(a);
+  if(!a.telefone){ copiarTexto(link); return; }
+  const msg=`Olá ${a.pacienteNome}! Sua teleconsulta com a ${clinicaNome} é em ${fmtData(a.data)} às ${a.hora}. Entre pela sala de vídeo no horário: ${link}`;
+  window.open(waLink(a.telefone,msg),'_blank');
 }
 function abrirModalAgendamento(id){
   const a=id?agendaData.find(x=>x.id===id):null;
@@ -657,9 +801,17 @@ function abrirModalAgendamento(id){
         </select>
       </div>
       <div class="field"><label>Observações</label><textarea id="fObs" rows="2">${a?a.obs||'':''}</textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px">
+        <input type="checkbox" id="fTele" style="width:auto" ${a&&a.teleconsulta?'checked':''}> Teleconsulta (gera sala de vídeo automática)
+      </label>
       ${a?`<div class="field"><label>Status</label><select id="fStatus">
         ${['agendado','confirmado','atendido','faltou','cancelado'].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
       </select></div>`:''}
+      ${a&&a.teleconsulta?`<div class="field"><label>Link da teleconsulta</label>
+        <div style="display:flex;gap:6px"><input class="mono" readonly value="${linkTeleconsulta(a)}" onclick="this.select()" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
+        <button class="btn sm" onclick="iniciarTeleconsulta('${a.id}')">Entrar</button>
+        <button class="btn sm" onclick="compartilharLinkTeleconsulta('${a.id}')">Enviar</button></div>
+      </div>`:''}
     </div>
     <div class="modalFoot">
       ${a?`<button class="btn danger" onclick="excluirAgendamento('${a.id}')">Excluir</button>`:''}
@@ -677,6 +829,7 @@ async function salvarAgendamento(id){
     id:id||uid(), pacienteId, pacienteNome:paciente?paciente.nome:'', telefone:paciente?paciente.telefone:'',
     data:$('fData').value, hora:$('fHora').value, tipo:$('fTipo').value.trim(), profissional:$('fProf').value.trim(),
     procedimentoId:$('fProcedimento').value||'', obs:$('fObs').value.trim(), status: id ? $('fStatus').value : 'agendado',
+    teleconsulta: $('fTele')?$('fTele').checked:false,
     baixaFeita: anterior?anterior.baixaFeita:false
   };
   if(!obj.data||!obj.hora){showToast('Preencha data e horário.','err');return;}
@@ -688,8 +841,20 @@ async function salvarAgendamento(id){
   const idx=agendaData.findIndex(a=>a.id===obj.id);
   if(idx>=0) agendaData[idx]=obj; else agendaData.push(obj);
   await saveList('agendamentos',agendaData);
+  await registrarAuditoria(id?'Editou agendamento':'Criou agendamento',obj.pacienteNome+' — '+fmtData(obj.data)+' '+obj.hora);
+  if(!id){ confirmarAutomaticoSeAtivo(obj); }
   closeModal(); showToast(id?'Agendamento atualizado.':'Agendamento criado.','ok');
   agendaSelDia=obj.data; pintarAgenda();
+}
+async function confirmarAutomaticoSeAtivo(a){
+  if(!a.telefone) return;
+  const cfg=await loadConfigClinica();
+  if(!cfg.confirmacaoAutomatica||!cfg.webhookAtivo||!cfg.webhookWhats) return;
+  const msg=`Olá ${a.pacienteNome}! Sua consulta na ${clinicaNome} foi agendada para ${fmtData(a.data)} às ${a.hora}.${a.teleconsulta?' É uma teleconsulta — o link é enviado perto do horário.':''} Responda pra confirmar.`;
+  try{
+    await fetch(cfg.webhookWhats,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({telefone:a.telefone,mensagem:msg,paciente:a.pacienteNome,data:a.data,hora:a.hora,clinica:clinicaNome})});
+  }catch(e){}
 }
 async function processarProcedimentoNaConsulta(a){
   const proc=agendaProcedimentos.find(p=>p.id===a.procedimentoId);
@@ -730,6 +895,12 @@ async function lembreteWhats(id){
   }
   window.open(waLink(a.telefone,msg),'_blank');
 }
+async function pedirAvaliacao(id){
+  const a=agendaData.find(x=>x.id===id); if(!a) return;
+  const link=linkAvaliacaoPublica(id);
+  if(!a.telefone){ copiarTexto(link); return; }
+  window.open(waLink(a.telefone,`Olá ${a.pacienteNome}! Poderia avaliar seu atendimento na ${clinicaNome}? Leva menos de 1 minuto: ${link}`),'_blank');
+}
 </script>
 <script>
 /* ================= PACIENTES ================= */
@@ -769,9 +940,18 @@ function abrirModalPaciente(id){
         <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?p.nascimento||'':''}"></div>
       </div>
       <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?p.obs||'':''}</textarea></div>
+      <div class="field" style="background:var(--paper2);border-radius:8px;padding:10px 12px">
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;font-weight:400;margin:0">
+          <input type="checkbox" id="pConsentimento" style="width:auto;margin-top:2px" ${p&&p.consentimentoLgpdEm?'checked':''}>
+          <span>Paciente autorizou o uso dos dados (LGPD) — consentimento livre, informado e específico para dados de saúde. ${p&&p.consentimentoLgpdEm?`<b>Registrado em ${fmtDataHora(p.consentimentoLgpdEm)}.</b>`:''}</span>
+        </label>
+      </div>
     </div>
     <div class="modalFoot">
-      ${p?`<button class="btn" onclick="abrirProntuario('${p.id}')">Ver prontuário</button>`:''}
+      ${p&&podeVerProntuario()?`<button class="btn" onclick="abrirProntuario('${p.id}')">Ver prontuário</button>`:''}
+      ${p?`<button class="btn sm" onclick="gerarPortalPaciente('${p.id}')">Link do portal</button>`:''}
+      ${p?`<button class="btn sm" onclick="exportarDadosPaciente('${p.id}')">Exportar dados</button>`:''}
+      ${p&&meuPerfil==='admin'?`<button class="btn danger" onclick="anonimizarPaciente('${p.id}')">Anonimizar</button>`:''}
       ${p?`<button class="btn danger" onclick="excluirPaciente('${p.id}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="salvarPaciente(${p?`'${p.id}'`:'null'})">Salvar</button>
@@ -779,31 +959,51 @@ function abrirModalPaciente(id){
   `);
 }
 
-/* ---- Prontuário: evolução por consulta + anexos ---- */
-let prontuarioPacienteId=null; let evolucoesData=[];
+/* ---- Prontuário: evolução por consulta + anexos + odontograma + assinatura + prescrição ---- */
+let prontuarioPacienteId=null; let evolucoesData=[]; let prontuarioCfg={}; let prontuarioModelos=[];
+const MODELOS_PADRAO=[
+  {id:'pad-clinico',especialidade:'Clínico geral',nome:'Consulta padrão',texto:'Queixa principal:\nHistória da doença atual:\nExame físico:\nHipótese diagnóstica:\nConduta / prescrição:'},
+  {id:'pad-odonto',especialidade:'Odontologia',nome:'Avaliação odontológica',texto:'Queixa principal:\nExame clínico / odontograma:\nProcedimento realizado:\nOrientações e retorno:'},
+  {id:'pad-psico',especialidade:'Psicologia',nome:'Sessão',texto:'Demanda trazida na sessão:\nObservações clínicas (sem juízo de valor):\nEvolução em relação ao plano terapêutico:\nEncaminhamentos, se houver:'}
+];
 async function abrirProntuario(pacienteId){
+  if(!podeVerProntuario()){ showToast('Seu perfil não tem acesso ao prontuário clínico.','err'); return; }
   prontuarioPacienteId=pacienteId;
   const p=pacientesData.find(x=>x.id===pacienteId);
-  evolucoesData=await loadList('evolucoes');
+  [evolucoesData,prontuarioCfg,prontuarioModelos]=await Promise.all([loadList('evolucoes'),loadConfigClinica(),loadList('anamneseModelos')]);
   pintarProntuario(p);
 }
+function modelosDisponiveis(){ return [...MODELOS_PADRAO,...prontuarioModelos]; }
 function pintarProntuario(p){
   const minhas=evolucoesData.filter(e=>e.pacienteId===prontuarioPacienteId).sort((a,b)=>b.data.localeCompare(a.data));
+  const ehOdonto=(prontuarioCfg.especialidade==='Odontologia');
   openModal(`
     <div class="modalHead"><h3>Prontuário — ${p.nome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
+      <div class="toolbar" style="margin-bottom:14px">
+        ${ehOdonto?`<button class="btn sm" onclick="abrirOdontograma('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🦷 Odontograma</button>`:''}
+        <button class="btn sm" onclick="abrirPrescricao('${p.id}','${p.nome.replace(/'/g,"\\'")}')">💊 Prescrever</button>
+        <button class="btn sm" onclick="gerenciarModelos()">Modelos de anamnese</button>
+      </div>
       <div class="formRow">
         <div class="field"><label>Data</label><input type="date" id="evData" value="${hojeISO()}"></div>
-        <div class="field"><label>Anexo (opcional)</label><input type="file" id="evAnexo" accept="image/*,.pdf"></div>
+        <div class="field"><label>Modelo (opcional)</label><select id="evModelo" onchange="aplicarModeloEvolucao(this.value)">
+          <option value="">Em branco</option>
+          ${modelosDisponiveis().map(m=>`<option value="${m.id}">${m.nome} (${m.especialidade})</option>`).join('')}
+        </select></div>
       </div>
-      <div class="field"><label>Evolução / anotação da consulta</label><textarea id="evTexto" rows="3" placeholder="Queixa, exame, conduta, prescrição…"></textarea></div>
+      <div class="field"><label>Anexo (opcional)</label><input type="file" id="evAnexo" accept="image/*,.pdf"></div>
+      <div class="field"><label>Evolução / anotação da consulta</label><textarea id="evTexto" rows="5" placeholder="Queixa, exame, conduta, prescrição…"></textarea></div>
       <button class="btn primary sm" onclick="salvarEvolucao()">Adicionar ao prontuário</button>
       <div style="margin-top:18px;border-top:1px solid var(--line-soft);padding-top:14px">
         ${minhas.length? minhas.map(e=>`
           <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line-soft)">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <b style="font-family:'Newsreader',serif">${fmtData(e.data)}</b>
-              <button class="iconBtn" onclick="excluirEvolucao('${e.id}')">🗑</button>
+              <div style="display:flex;gap:4px;align-items:center">
+                ${e.assinadoEm?`<span class="tag" style="background:var(--teal-soft);color:var(--teal)" title="Assinado em ${fmtDataHora(e.assinadoEm)}">✓ assinado</span>`:`<button class="btn sm" onclick="assinarEvolucao('${e.id}')">Assinar</button>`}
+                ${!e.assinadoEm?`<button class="iconBtn" onclick="excluirEvolucao('${e.id}')">🗑</button>`:''}
+              </div>
             </div>
             <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${e.texto||''}</div>
             ${e.anexoNome?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${e.anexoData}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${e.anexoData}" download="${e.anexoNome}" class="tag">📎 ${e.anexoNome}</a>`}</div>`:''}
@@ -812,6 +1012,11 @@ function pintarProntuario(p){
     </div>
     <div class="modalFoot"><button class="btn" onclick="closeModal()">Fechar</button></div>
   `);
+}
+function aplicarModeloEvolucao(modeloId){
+  if(!modeloId) return;
+  const m=modelosDisponiveis().find(x=>x.id===modeloId);
+  if(m) $('evTexto').value=m.texto;
 }
 async function salvarEvolucao(){
   const texto=$('evTexto').value.trim(), data=$('evData').value;
@@ -824,6 +1029,7 @@ async function salvarEvolucao(){
   }
   evolucoesData.push(obj);
   await saveList('evolucoes',evolucoesData);
+  await registrarAuditoria('Adicionou evolução ao prontuário','paciente='+prontuarioPacienteId);
   showToast('Evolução adicionada.','ok');
   pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId));
 }
@@ -831,43 +1037,191 @@ async function excluirEvolucao(id){
   if(!confirm('Excluir esta anotação do prontuário?')) return;
   evolucoesData=evolucoesData.filter(e=>e.id!==id);
   await saveList('evolucoes',evolucoesData);
+  await registrarAuditoria('Excluiu evolução do prontuário','id='+id);
   pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId));
+}
+async function assinarEvolucao(id){
+  const e=evolucoesData.find(x=>x.id===id); if(!e) return;
+  const cfg=prontuarioCfg;
+  if(cfg.assinaturaWebhook){
+    try{
+      await fetch(cfg.assinaturaWebhook,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({evolucaoId:e.id,pacienteId:e.pacienteId,texto:e.texto,data:e.data,assinante:sbUser.email,clinica:clinicaNome})});
+    }catch(err){}
+    showToast('Enviado pro seu provedor de assinatura ICP-Brasil (confira se retornou confirmação).','ok');
+  } else {
+    showToast('Sem provedor ICP-Brasil configurado — marcando como assinado localmente (trava edição, mas sem validade de certificado digital). Configure em Config → Integrações.','ok');
+  }
+  e.assinadoEm=new Date().toISOString(); e.assinadoPor=sbUser.email;
+  await saveList('evolucoes',evolucoesData);
+  await registrarAuditoria('Assinou evolução do prontuário','id='+id);
+  pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId));
+}
+function gerenciarModelos(){
+  openModal(`
+    <div class="modalHead"><h3>Modelos de anamnese</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Modelos padrão (clínico geral, odontologia, psicologia) já vêm prontos. Crie os seus abaixo.</p>
+      <div id="modelosList">${prontuarioModelos.map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line-soft)">
+        <span>${m.nome} <span class="tag">${m.especialidade}</span></span><button class="iconBtn" onclick="excluirModelo('${m.id}')">🗑</button></div>`).join('')||'<p style="font-size:12.5px;color:var(--gray)">Nenhum modelo próprio ainda.</p>'}</div>
+      <div class="field" style="margin-top:14px"><label>Nome do modelo</label><input id="mdNome" placeholder="Ex: Retorno pós-operatório"></div>
+      <div class="field"><label>Especialidade</label><input id="mdEsp" placeholder="Ex: Odontologia" value="${prontuarioCfg.especialidade||''}"></div>
+      <div class="field"><label>Texto (campos/roteiro)</label><textarea id="mdTexto" rows="4" placeholder="Queixa:\nExame:\nConduta:"></textarea></div>
+      <button class="btn primary sm" onclick="salvarModelo()">Adicionar modelo</button>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId))">Voltar ao prontuário</button></div>
+  `);
+}
+async function salvarModelo(){
+  const nome=$('mdNome').value.trim(), esp=$('mdEsp').value.trim()||'Geral', texto=$('mdTexto').value;
+  if(!nome){showToast('Dê um nome ao modelo.','err');return;}
+  prontuarioModelos.push({id:uid(),nome,especialidade:esp,texto});
+  await saveList('anamneseModelos',prontuarioModelos);
+  showToast('Modelo criado.','ok'); gerenciarModelos();
+}
+async function excluirModelo(id){
+  prontuarioModelos=prontuarioModelos.filter(m=>m.id!==id);
+  await saveList('anamneseModelos',prontuarioModelos);
+  gerenciarModelos();
+}
+function abrirPrescricao(pacienteId,pacienteNome){
+  if(prontuarioCfg.memedToken){
+    showToast('Abrindo o editor de receita da Memed em nova aba (integre o token no seu ambiente Memed pra vincular automaticamente o paciente).','ok');
+    window.open('https://memed.com.br','_blank');
+  } else {
+    showToast('Prescrição eletrônica ainda não configurada — cole seu token da Memed em Config → Integrações.','err');
+  }
 }
 async function salvarPaciente(id){
   const nome=$('pNome').value.trim();
   if(!nome){showToast('Digite o nome do paciente.','err');return;}
-  const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,obs:$('pObs').value.trim()};
+  const anterior=id?pacientesData.find(p=>p.id===id):null;
+  const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,obs:$('pObs').value.trim(),
+    consentimentoLgpdEm: $('pConsentimento').checked ? (anterior&&anterior.consentimentoLgpdEm?anterior.consentimentoLgpdEm:new Date().toISOString()) : null};
   const idx=pacientesData.findIndex(p=>p.id===obj.id);
   if(idx>=0) pacientesData[idx]=obj; else pacientesData.push(obj);
   await saveList('pacientes',pacientesData);
+  await registrarAuditoria(id?'Editou paciente':'Cadastrou paciente',nome);
   closeModal(); showToast(id?'Paciente atualizado.':'Paciente cadastrado.','ok'); pintarPacientes();
 }
 async function excluirPaciente(id){
   if(!confirm('Excluir este paciente? Os agendamentos já criados não serão apagados.')) return;
+  const p=pacientesData.find(x=>x.id===id);
   pacientesData=pacientesData.filter(p=>p.id!==id);
   await saveList('pacientes',pacientesData);
+  await registrarAuditoria('Excluiu paciente',p?p.nome:id);
   closeModal(); showToast('Paciente excluído.','ok'); pintarPacientes();
+}
+async function gerarPortalPaciente(id){
+  const p=pacientesData.find(x=>x.id===id); if(!p) return;
+  if(demoMode||!sb){ showToast('O portal do paciente precisa do Supabase conectado.','err'); return; }
+  const agend=await loadList('agendamentos');
+  const proximos=agend.filter(a=>a.pacienteId===id&&a.data>=hojeISO()&&a.status!=='cancelado').sort((a,b)=>a.data.localeCompare(b.data)||a.hora.localeCompare(b.hora));
+  const passados=agend.filter(a=>a.pacienteId===id&&a.data<hojeISO()).sort((a,b)=>b.data.localeCompare(a.data)).slice(0,10);
+  const snapshot={nome:p.nome,proximos:proximos.map(a=>({data:a.data,hora:a.hora,tipo:a.tipo,profissional:a.profissional,teleconsulta:!!a.teleconsulta})),
+    historico:passados.map(a=>({data:a.data,tipo:a.tipo,status:a.status}))};
+  const token=await publicarPortalPaciente(id,snapshot,30);
+  const url=new URL(location.href); url.search=''; url.searchParams.set('public','portal'); url.searchParams.set('token',token);
+  await registrarAuditoria('Gerou link do portal do paciente',p.nome);
+  copiarTexto(url.toString());
+  showToast('Link do portal copiado (válido por 30 dias).','ok');
+}
+async function exportarDadosPaciente(id){
+  const p=pacientesData.find(x=>x.id===id); if(!p) return;
+  const [evol,agend]=await Promise.all([loadList('evolucoes'),loadList('agendamentos')]);
+  const dados={paciente:p,evolucoes:evol.filter(e=>e.pacienteId===id),agendamentos:agend.filter(a=>a.pacienteId===id),exportadoEm:new Date().toISOString()};
+  const blob=new Blob([JSON.stringify(dados,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='dados_'+p.nome.replace(/\s+/g,'_')+'.json'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+  await registrarAuditoria('Exportou dados de um paciente (LGPD)',p.nome);
+  showToast('Dados exportados.','ok');
+}
+/* ---- Odontograma (numeração FDI, usada no Brasil) ---- */
+const ODONTO_DENTES=[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28,48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
+const ODONTO_ESTADOS=['higido','cariado','restaurado','extracao','ausente','implante','canal'];
+const ODONTO_LABEL={higido:'Hígido',cariado:'Cariado',restaurado:'Restaurado',extracao:'Extração indicada',ausente:'Ausente',implante:'Implante',canal:'Tratamento de canal'};
+const ODONTO_COR={higido:'#fff',cariado:'var(--coral-soft)',restaurado:'var(--blue-soft)',extracao:'var(--amber-soft)',ausente:'var(--line-soft)',implante:'var(--teal-soft)',canal:'#EADFF3'};
+let odontogramaData=null, odontogramaPacienteId=null, odontogramaPacienteNome='';
+async function abrirOdontograma(pacienteId,pacienteNome){
+  odontogramaPacienteId=pacienteId; odontogramaPacienteNome=pacienteNome;
+  const lista=await loadList('odontogramas');
+  odontogramaData=lista.find(o=>o.pacienteId===pacienteId)||{id:uid(),pacienteId,dentes:{},atualizadoEm:null};
+  pintarOdontograma();
+}
+function pintarOdontograma(){
+  const linha=arr=>arr.map(n=>{
+    const st=odontogramaData.dentes[n]||'higido';
+    return `<button class="btn sm" title="${ODONTO_LABEL[st]}" style="background:${ODONTO_COR[st]};min-width:38px;padding:6px 2px;font-size:11px" onclick="cicloDente(${n})">${n}</button>`;
+  }).join('');
+  openModal(`
+    <div class="modalHead"><h3>Odontograma — ${odontogramaPacienteNome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:0">Clique num dente pra alternar o estado (hígido → cariado → restaurado → extração indicada → ausente → implante → canal). Numeração FDI.</p>
+      <div style="display:grid;grid-template-columns:repeat(16,1fr);gap:3px;margin-bottom:6px">${linha(ODONTO_DENTES.slice(0,16))}</div>
+      <div style="display:grid;grid-template-columns:repeat(16,1fr);gap:3px;margin-bottom:14px">${linha(ODONTO_DENTES.slice(16).reverse())}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${ODONTO_ESTADOS.map(s=>`<span class="tag" style="background:${ODONTO_COR[s]}">${ODONTO_LABEL[s]}</span>`).join('')}
+      </div>
+      ${odontogramaData.atualizadoEm?`<p style="font-size:11px;color:var(--gray);margin-top:12px">Última atualização: ${fmtDataHora(odontogramaData.atualizadoEm)}</p>`:''}
+    </div>
+    <div class="modalFoot">
+      <button class="btn" onclick="pintarProntuario(pacientesData.find(x=>x.id===odontogramaPacienteId))">Voltar ao prontuário</button>
+      <button class="btn primary" onclick="salvarOdontograma()">Salvar</button>
+    </div>
+  `);
+}
+function cicloDente(n){
+  const atual=odontogramaData.dentes[n]||'higido';
+  const idx=ODONTO_ESTADOS.indexOf(atual);
+  odontogramaData.dentes[n]=ODONTO_ESTADOS[(idx+1)%ODONTO_ESTADOS.length];
+  pintarOdontograma();
+}
+async function salvarOdontograma(){
+  odontogramaData.atualizadoEm=new Date().toISOString();
+  const lista=await loadList('odontogramas');
+  const idx=lista.findIndex(o=>o.pacienteId===odontogramaPacienteId);
+  if(idx>=0) lista[idx]=odontogramaData; else lista.push(odontogramaData);
+  await saveList('odontogramas',lista);
+  await registrarAuditoria('Atualizou odontograma',odontogramaPacienteNome);
+  showToast('Odontograma salvo.','ok');
+}
+async function anonimizarPaciente(id){
+  if(!confirm('Isso substitui nome, telefone e observações por dados anônimos (irreversível), mantendo o histórico financeiro/estatístico. Confirma?')) return;
+  const p=pacientesData.find(x=>x.id===id); if(!p) return;
+  const nomeAntigo=p.nome;
+  p.nome='Paciente anonimizado'; p.telefone=''; p.obs=''; p.nascimento=''; p.consentimentoLgpdEm=null; p.anonimizadoEm=new Date().toISOString();
+  await saveList('pacientes',pacientesData);
+  const evol=await loadList('evolucoes');
+  evol.forEach(e=>{ if(e.pacienteId===id){ e.texto='[conteúdo removido a pedido do paciente — LGPD]'; delete e.anexoData; delete e.anexoNome; } });
+  await saveList('evolucoes',evol);
+  await registrarAuditoria('Anonimizou paciente (LGPD)',nomeAntigo);
+  closeModal(); showToast('Paciente anonimizado.','ok'); pintarPacientes();
 }
 </script>
 <script>
 /* ================= FINANCEIRO ================= */
 let lancData=[]; let contasData=[]; let financeiroMes=hojeISO().slice(0,7); let financeiroSubTab='lancamentos';
+let comissaoAgend=[], comissaoProc=[], planosRecorrentesData=[];
 async function renderFinanceiro(){
   $('topbarActs').innerHTML='';
   $('content').innerHTML='<div class="empty">Carregando…</div>';
-  [lancData,contasData]=await Promise.all([loadList('lancamentos'),loadList('contas')]);
+  [lancData,contasData,comissaoAgend,comissaoProc,planosRecorrentesData]=await Promise.all([
+    loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('planosRecorrentes')
+  ]);
   pintarFinanceiro();
 }
 function financeiroTabsHTML(){
-  return `<div class="gateTabs" style="max-width:420px;margin-bottom:16px">
-    <button class="gateTab ${financeiroSubTab==='lancamentos'?'on':''}" onclick="financeiroSubTab='lancamentos';pintarFinanceiro()">Lançamentos</button>
-    <button class="gateTab ${financeiroSubTab==='contas'?'on':''}" onclick="financeiroSubTab='contas';pintarFinanceiro()">A pagar/receber</button>
-    <button class="gateTab ${financeiroSubTab==='dre'?'on':''}" onclick="financeiroSubTab='dre';pintarFinanceiro()">DRE</button>
+  const abas=[['lancamentos','Lançamentos'],['contas','A pagar/receber'],['dre','DRE'],['comissoes','Comissões'],['recorrencia','Planos recorrentes']];
+  return `<div class="gateTabs" style="max-width:640px;margin-bottom:16px;flex-wrap:wrap">
+    ${abas.map(([k,l])=>`<button class="gateTab ${financeiroSubTab===k?'on':''}" onclick="financeiroSubTab='${k}';pintarFinanceiro()">${l}</button>`).join('')}
   </div>`;
 }
 function pintarFinanceiro(){
   if(financeiroSubTab==='contas') return pintarContas();
   if(financeiroSubTab==='dre') return pintarDRE();
+  if(financeiroSubTab==='comissoes') return pintarComissoes();
+  if(financeiroSubTab==='recorrencia') return pintarRecorrencia();
   const doMes=lancData.filter(l=>l.data.slice(0,7)===financeiroMes).sort((a,b)=>b.data.localeCompare(a.data));
   const receita=doMes.filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor||0),0);
   const despesa=doMes.filter(l=>l.tipo==='despesa').reduce((s,l)=>s+Number(l.valor||0),0);
@@ -887,9 +1241,106 @@ function pintarFinanceiro(){
         ${doMes.map(l=>`<tr><td>${fmtData(l.data)}</td><td>${l.descricao}</td><td><span class="tag">${l.categoria||'—'}</span></td><td><span class="tag">${naturezaLabel(l.natureza)}</span></td>
           <td><span class="badge ${l.tipo==='receita'?'confirmado':'cancelado'}">${l.tipo==='receita'?'Receita':'Despesa'}</span></td>
           <td class="mono">${BRL(l.valor)}</td>
-          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalLancamento('${l.id}')">✎</button></td></tr>`).join('')}
+          <td style="text-align:right;white-space:nowrap">
+            ${l.tipo==='receita'?`<button class="iconBtn" title="Gerar cobrança (Pix/cartão)" onclick="gerarCobranca('${l.id}')">💳</button><button class="iconBtn" title="Emitir NFS-e" onclick="emitirNfse('${l.id}')">🧾</button>`:''}
+            <button class="iconBtn" onclick="abrirModalLancamento('${l.id}')">✎</button>
+          </td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum lançamento neste mês</div>Registre o que a clínica recebeu e gastou.</div>`}
     </div>`;
+}
+async function gerarCobranca(lancId){
+  const l=lancData.find(x=>x.id===lancId); if(!l) return;
+  const cfg=await loadConfigClinica();
+  if(!cfg.pagamentoWebhook){ showToast('Configure um gateway de pagamento em Config → Integrações pra gerar cobranças de verdade.','err'); return; }
+  try{
+    await fetch(cfg.pagamentoWebhook,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({valor:l.valor,descricao:l.descricao,referencia:l.id,clinica:clinicaNome})});
+    showToast('Cobrança enviada pro seu gateway de pagamento.','ok');
+  }catch(e){ showToast('Não consegui alcançar o gateway.','err'); }
+}
+async function emitirNfse(lancId){
+  const l=lancData.find(x=>x.id===lancId); if(!l) return;
+  const cfg=await loadConfigClinica();
+  if(!cfg.nfseWebhook){ showToast('Configure um emissor de NFS-e em Config → Integrações pra emitir notas de verdade.','err'); return; }
+  try{
+    await fetch(cfg.nfseWebhook,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({valor:l.valor,descricao:l.descricao,referencia:l.id,clinica:clinicaNome})});
+    await registrarAuditoria('Solicitou emissão de NFS-e',l.descricao);
+    showToast('Solicitação de emissão enviada pro seu emissor de NFS-e.','ok');
+  }catch(e){ showToast('Não consegui alcançar o emissor.','err'); }
+}
+/* ---- Comissões por profissional (split de repasse) ---- */
+function pintarComissoes(){
+  const doMes=comissaoAgend.filter(a=>a.status==='atendido'&&a.data.slice(0,7)===financeiroMes&&a.procedimentoId);
+  const porProfissional={};
+  doMes.forEach(a=>{
+    const proc=comissaoProc.find(p=>p.id===a.procedimentoId); if(!proc) return;
+    const preco=proc.precoManual||precoSugeridoAgenda(proc);
+    const pct=Number(proc.comissaoPct||0); if(!pct) return;
+    const valorComissao=preco*pct/100;
+    const prof=a.profissional||'(sem profissional definido)';
+    porProfissional[prof]=(porProfissional[prof]||0)+valorComissao;
+  });
+  const linhas=Object.entries(porProfissional).sort((a,b)=>b[1]-a[1]);
+  $('content').innerHTML=`${financeiroTabsHTML()}
+    <div class="toolbar"><input type="month" class="gateInp" style="width:auto" value="${financeiroMes}" onchange="financeiroMes=this.value;pintarFinanceiro()"></div>
+    <div class="panel">
+      <div class="panelHead"><h2>Comissão por profissional</h2><span class="tag">Total: <b class="mono">${BRL(linhas.reduce((s,[,v])=>s+v,0))}</b></span></div>
+      ${linhas.length?`<table class="tbl"><thead><tr><th>Profissional</th><th>Comissão do mês</th></tr></thead><tbody>
+        ${linhas.map(([prof,v])=>`<tr><td>${prof}</td><td class="mono">${BRL(v)}</td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhuma comissão neste mês</div>Cadastre a % de comissão no procedimento (aba Procedimentos) e marque atendimentos como "Atendido".</div>`}
+    </div>`;
+}
+/* ---- Planos recorrentes (cobrança mensal a pacientes particulares) ---- */
+function pintarRecorrencia(){
+  $('content').innerHTML=`${financeiroTabsHTML()}
+    <div class="toolbar"><span style="flex:1"></span><button class="btn primary sm" onclick="abrirModalPlano()">+ Plano</button></div>
+    <div class="panel">
+      ${planosRecorrentesData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Valor</th><th>Periodicidade</th><th>Próxima cobrança</th><th></th></tr></thead><tbody>
+        ${planosRecorrentesData.map(p=>`<tr><td>${p.pacienteNome}</td><td class="mono">${BRL(p.valor)}</td><td>${p.periodicidade==='semanal'?'Semanal':'Mensal'}</td><td>${fmtData(p.proximaCobranca)}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="gerarCobrancaPlano('${p.id}')">Gerar cobrança</button> <button class="iconBtn" onclick="excluirPlano('${p.id}')">🗑</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhum plano cadastrado</div>Pra pacientes com cobrança fixa recorrente (mensalidade, pacote de sessões).</div>`}
+    </div>`;
+}
+let planoPacientesOpts=[];
+async function abrirModalPlano(){
+  planoPacientesOpts=await loadList('pacientes');
+  openModal(`
+    <div class="modalHead"><h3>Novo plano recorrente</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Paciente</label><select id="plPaciente">${planoPacientesOpts.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="formRow">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="plValor"></div>
+        <div class="field"><label>Periodicidade</label><select id="plPeriodicidade"><option value="mensal">Mensal</option><option value="semanal">Semanal</option></select></div>
+      </div>
+      <div class="field"><label>Próxima cobrança</label><input type="date" id="plProxima" value="${hojeISO()}"></div>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="salvarPlano()">Criar plano</button></div>
+  `);
+}
+async function salvarPlano(){
+  const pacienteId=$('plPaciente').value, valor=parseFloat($('plValor').value);
+  if(!pacienteId||!valor){showToast('Escolha o paciente e o valor.','err');return;}
+  const pac=planoPacientesOpts.find(p=>p.id===pacienteId);
+  planosRecorrentesData.push({id:uid(),pacienteId,pacienteNome:pac?pac.nome:'',valor,periodicidade:$('plPeriodicidade').value,proximaCobranca:$('plProxima').value});
+  await saveList('planosRecorrentes',planosRecorrentesData);
+  closeModal(); showToast('Plano criado.','ok'); pintarFinanceiro();
+}
+async function gerarCobrancaPlano(id){
+  const p=planosRecorrentesData.find(x=>x.id===id); if(!p) return;
+  contasData.push({id:uid(),tipo:'receber',descricao:'Plano — '+p.pacienteNome,valor:p.valor,vencimento:p.proximaCobranca,status:'pendente'});
+  await saveList('contas',contasData);
+  const d=new Date(p.proximaCobranca+'T00:00:00');
+  if(p.periodicidade==='semanal') d.setDate(d.getDate()+7); else d.setMonth(d.getMonth()+1);
+  p.proximaCobranca=d.toISOString().slice(0,10);
+  await saveList('planosRecorrentes',planosRecorrentesData);
+  showToast('Cobrança gerada em Contas a receber; próxima data já atualizada.','ok'); pintarFinanceiro();
+}
+async function excluirPlano(id){
+  if(!confirm('Excluir este plano recorrente?')) return;
+  planosRecorrentesData=planosRecorrentesData.filter(p=>p.id!==id);
+  await saveList('planosRecorrentes',planosRecorrentesData);
+  pintarFinanceiro();
 }
 function naturezaLabel(n){ return {fixa:'Fixa',variavel:'Variável',cmv:'CMV (insumo)'}[n]||'Variável'; }
 function exportarFinanceiroCSV(){
@@ -1175,7 +1626,7 @@ function pintarProcedimentos(){
 function abrirModalProcedimento(id){
   const p=id?procData.find(x=>x.id===id):null;
   procItensTemp = p ? JSON.parse(JSON.stringify(p.itens||[])) : [];
-  procDraft = p ? {nome:p.nome,margem:p.margem||30,precoManual:p.precoManual||''} : {nome:'',margem:30,precoManual:''};
+  procDraft = p ? {nome:p.nome,margem:p.margem||30,precoManual:p.precoManual||'',comissaoPct:p.comissaoPct||''} : {nome:'',margem:30,precoManual:'',comissaoPct:''};
   renderModalProcedimento(id||null);
 }
 function renderModalProcedimento(id){
@@ -1207,6 +1658,7 @@ function renderModalProcedimento(id){
         <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" id="prMargem" value="${margem}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
         <div class="field"><label>Preço manual (opcional, sobrepõe o sugerido)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" onchange="procDraft.precoManual=this.value"></div>
       </div>
+      <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${procDraft.comissaoPct||''}" placeholder="Ex: 30"></div>
       <div class="card" style="background:var(--teal-soft);border:none">
         <div style="display:flex;justify-content:space-between;font-size:13px"><span>Custo dos insumos</span><b class="mono" id="prCustoView">${BRL(custo)}</b></div>
         <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Preço sugerido</span><b class="mono" id="prSugeridoView" style="color:var(--teal)">${BRL(sugerido)}</b></div>
@@ -1239,7 +1691,7 @@ function atualizarPrecoModal(){
 async function salvarProcedimento(id){
   const nome=$('prNome').value.trim();
   if(!nome){showToast('Digite o nome do procedimento.','err');return;}
-  const obj={id:id||uid(),nome,itens:procItensTemp,margem:parseFloat($('prMargem').value)||0,precoManual:parseFloat($('prPrecoManual').value)||0};
+  const obj={id:id||uid(),nome,itens:procItensTemp,margem:parseFloat($('prMargem').value)||0,precoManual:parseFloat($('prPrecoManual').value)||0,comissaoPct:parseFloat($('prComissao').value)||0};
   const idx=procData.findIndex(x=>x.id===obj.id);
   if(idx>=0) procData[idx]=obj; else procData.push(obj);
   await saveList('procedimentos',procData);
@@ -1250,6 +1702,491 @@ async function excluirProcedimento(id){
   procData=procData.filter(x=>x.id!==id);
   await saveList('procedimentos',procData);
   closeModal(); showToast('Procedimento excluído.','ok'); pintarProcedimentos();
+}
+</script>
+<script>
+/* ================= CONVÊNIOS / TISS (faturamento de planos de saúde) ================= */
+let convenioSubTab='convenios'; let conveniosData=[]; let tabelaConvenioData=[]; let guiasData=[]; let convPacientes=[]; let convProcedimentos=[];
+async function renderConvenios(){
+  $('topbarActs').innerHTML='';
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  [conveniosData,tabelaConvenioData,guiasData,convPacientes,convProcedimentos]=await Promise.all([
+    loadList('convenios'),loadList('tabelaConvenio'),loadList('guias'),loadList('pacientes'),loadList('procedimentos')
+  ]);
+  pintarConvenios();
+}
+function conveniosTabsHTML(){
+  return `<div class="gateTabs" style="max-width:460px;margin-bottom:16px">
+    <button class="gateTab ${convenioSubTab==='convenios'?'on':''}" onclick="convenioSubTab='convenios';pintarConvenios()">Convênios</button>
+    <button class="gateTab ${convenioSubTab==='precos'?'on':''}" onclick="convenioSubTab='precos';pintarConvenios()">Tabela de preços</button>
+    <button class="gateTab ${convenioSubTab==='guias'?'on':''}" onclick="convenioSubTab='guias';pintarConvenios()">Guias (TISS)</button>
+  </div>`;
+}
+function pintarConvenios(){
+  if(convenioSubTab==='precos') return pintarTabelaPrecos();
+  if(convenioSubTab==='guias') return pintarGuias();
+  $('content').innerHTML=`${conveniosTabsHTML()}
+    <div class="toolbar"><span style="flex:1"></span><button class="btn primary sm" onclick="abrirModalConvenio()">+ Convênio</button></div>
+    <div class="panel">
+      ${conveniosData.length?`<table class="tbl"><thead><tr><th>Convênio</th><th>Registro ANS</th><th>Contato</th><th>Prazo de envio</th><th></th></tr></thead><tbody>
+        ${conveniosData.map(c=>`<tr><td>${c.nome}</td><td class="mono">${c.registroAns||'—'}</td><td>${c.contato||'—'}</td><td>${c.prazoEnvio?c.prazoEnvio+' dias':'—'}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalConvenio('${c.id}')">✎</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhum convênio cadastrado</div>Cadastre os planos de saúde que sua clínica atende.</div>`}
+    </div>`;
+}
+function abrirModalConvenio(id){
+  const c=id?conveniosData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${c?'Editar convênio':'Novo convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Nome do convênio</label><input id="cvNome" placeholder="Ex: Bradesco Saúde" value="${c?c.nome:''}"></div>
+      <div class="formRow">
+        <div class="field"><label>Registro ANS (operadora)</label><input id="cvAns" value="${c?c.registroAns||'':''}"></div>
+        <div class="field"><label>Prazo de envio (dias)</label><input type="number" id="cvPrazo" value="${c?c.prazoEnvio||30:30}"></div>
+      </div>
+      <div class="field"><label>Contato / suporte</label><input id="cvContato" placeholder="Telefone, e-mail…" value="${c?c.contato||'':''}"></div>
+    </div>
+    <div class="modalFoot">
+      ${c?`<button class="btn danger" onclick="excluirConvenio('${c.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarConvenio(${c?`'${c.id}'`:'null'})">Salvar</button>
+    </div>`);
+}
+async function salvarConvenio(id){
+  const nome=$('cvNome').value.trim();
+  if(!nome){showToast('Digite o nome do convênio.','err');return;}
+  const obj={id:id||uid(),nome,registroAns:$('cvAns').value.trim(),prazoEnvio:parseInt($('cvPrazo').value)||30,contato:$('cvContato').value.trim()};
+  const idx=conveniosData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) conveniosData[idx]=obj; else conveniosData.push(obj);
+  await saveList('convenios',conveniosData);
+  await registrarAuditoria(id?'Editou convênio':'Cadastrou convênio',nome);
+  closeModal(); showToast('Convênio salvo.','ok'); pintarConvenios();
+}
+async function excluirConvenio(id){
+  if(!confirm('Excluir este convênio?')) return;
+  conveniosData=conveniosData.filter(x=>x.id!==id);
+  await saveList('convenios',conveniosData);
+  closeModal(); showToast('Convênio excluído.','ok'); pintarConvenios();
+}
+/* ---- tabela de preços por convênio (TUSS) ---- */
+let tabelaPrecoFiltro='';
+function mudarFiltroPreco(v){ tabelaPrecoFiltro=v; pintarTabelaPrecos(); }
+function pintarTabelaPrecos(){
+  const lista=tabelaConvenioData.filter(t=>!tabelaPrecoFiltro||t.convenioId===tabelaPrecoFiltro);
+  $('content').innerHTML=`${conveniosTabsHTML()}
+    <div class="toolbar">
+      <select id="tpConvenioFiltro" onchange="mudarFiltroPreco(this.value)" style="padding:9px 11px;border:1px solid var(--line);border-radius:7px">
+        <option value="" ${!tabelaPrecoFiltro?'selected':''}>Todos os convênios</option>
+        ${conveniosData.map(c=>`<option value="${c.id}" ${tabelaPrecoFiltro===c.id?'selected':''}>${c.nome}</option>`).join('')}
+      </select>
+      <span style="flex:1"></span>
+      <button class="btn primary sm" onclick="abrirModalPreco()">+ Preço</button>
+    </div>
+    <div class="panel">
+      ${!lista.length?`<div class="empty"><div class="big">Nenhum preço cadastrado</div>Vincule o valor que cada convênio paga por procedimento (código TUSS).</div>`:
+      `<table class="tbl"><thead><tr><th>Convênio</th><th>Procedimento</th><th>Código TUSS</th><th>Valor</th><th></th></tr></thead><tbody>
+          ${lista.map(t=>{
+            const conv=conveniosData.find(c=>c.id===t.convenioId), proc=convProcedimentos.find(p=>p.id===t.procedimentoId);
+            return `<tr><td>${conv?conv.nome:'—'}</td><td>${proc?proc.nome:t.procedimentoNome||'—'}</td><td class="mono">${t.codigoTuss||'—'}</td><td class="mono">${BRL(t.valor)}</td>
+              <td style="text-align:right"><button class="iconBtn" onclick="abrirModalPreco('${t.id}')">✎</button></td></tr>`;
+          }).join('')}
+        </tbody></table>`}
+    </div>`;
+}
+function abrirModalPreco(id){
+  const t=id?tabelaConvenioData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${t?'Editar preço':'Novo preço por convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Convênio</label><select id="tpConvenio">${conveniosData.map(c=>`<option value="${c.id}" ${t&&t.convenioId===c.id?'selected':''}>${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Procedimento</label><select id="tpProcedimento">${convProcedimentos.map(p=>`<option value="${p.id}" ${t&&t.procedimentoId===p.id?'selected':''}>${p.nome}</option>`).join('')||'<option value="">Cadastre um procedimento primeiro</option>'}</select></div>
+      <div class="formRow">
+        <div class="field"><label>Código TUSS</label><input id="tpCodigo" placeholder="Ex: 10101012" value="${t?t.codigoTuss||'':''}"></div>
+        <div class="field"><label>Valor pago pelo convênio (R$)</label><input type="number" step="0.01" id="tpValor" value="${t?t.valor:''}"></div>
+      </div>
+    </div>
+    <div class="modalFoot">
+      ${t?`<button class="btn danger" onclick="excluirPreco('${t.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarPreco(${t?`'${t.id}'`:'null'})">Salvar</button>
+    </div>`);
+}
+async function salvarPreco(id){
+  const convenioId=$('tpConvenio').value, procedimentoId=$('tpProcedimento').value, valor=parseFloat($('tpValor').value);
+  if(!convenioId||!procedimentoId||!valor){showToast('Preencha convênio, procedimento e valor.','err');return;}
+  const proc=convProcedimentos.find(p=>p.id===procedimentoId);
+  const obj={id:id||uid(),convenioId,procedimentoId,procedimentoNome:proc?proc.nome:'',codigoTuss:$('tpCodigo').value.trim(),valor};
+  const idx=tabelaConvenioData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) tabelaConvenioData[idx]=obj; else tabelaConvenioData.push(obj);
+  await saveList('tabelaConvenio',tabelaConvenioData);
+  closeModal(); showToast('Preço salvo.','ok'); pintarConvenios();
+}
+async function excluirPreco(id){
+  tabelaConvenioData=tabelaConvenioData.filter(x=>x.id!==id);
+  await saveList('tabelaConvenio',tabelaConvenioData);
+  closeModal(); showToast('Preço excluído.','ok'); pintarConvenios();
+}
+/* ---- guias TISS + controle de glosa ---- */
+function guiaStatusBadge(s){
+  return {rascunho:'agendado',enviada:'confirmado',paga:'atendido',glosada:'cancelado'}[s]||'agendado';
+}
+function guiaStatusLabel(s){ return {rascunho:'Rascunho',enviada:'Enviada',paga:'Paga',glosada:'Glosada'}[s]||s; }
+function pintarGuias(){
+  const totalGlosado=guiasData.filter(g=>g.status==='glosada').reduce((s,g)=>s+Number(g.valor||0),0);
+  const totalAReceber=guiasData.filter(g=>g.status==='enviada').reduce((s,g)=>s+Number(g.valor||0),0);
+  $('content').innerHTML=`${conveniosTabsHTML()}
+    <div class="toolbar">
+      <span class="tag">Enviadas, aguardando: <b class="mono">${BRL(totalAReceber)}</b></span>
+      <span class="tag" style="background:var(--coral-soft);color:var(--coral)">Glosado: <b class="mono">${BRL(totalGlosado)}</b></span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="exportarGuiasCSV()">Exportar CSV</button>
+      <button class="btn primary sm" onclick="abrirModalGuia()">+ Guia</button>
+    </div>
+    <div class="panel">
+      ${guiasData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Convênio</th><th>Procedimento</th><th>Valor</th><th>Status</th><th></th></tr></thead><tbody>
+        ${[...guiasData].sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||'')).map(g=>`<tr><td>${g.pacienteNome}</td><td>${g.convenioNome}</td><td>${g.procedimentoNome||'—'}</td><td class="mono">${BRL(g.valor)}</td>
+          <td><span class="badge ${guiaStatusBadge(g.status)}">${guiaStatusLabel(g.status)}</span>${g.motivoGlosa?`<div style="font-size:11px;color:var(--coral);margin-top:2px">${g.motivoGlosa}</div>`:''}</td>
+          <td style="text-align:right;white-space:nowrap">
+            ${g.status==='rascunho'?`<button class="btn sm" onclick="enviarGuia('${g.id}')">Enviar</button>`:''}
+            ${g.status==='enviada'?`<button class="btn sm" onclick="marcarGuiaPaga('${g.id}')">Paga</button><button class="btn sm" onclick="marcarGuiaGlosada('${g.id}')">Glosa</button>`:''}
+            ${g.status==='glosada'?`<button class="btn sm" onclick="reenviarGuia('${g.id}')">Reenviar</button>`:''}
+            <button class="iconBtn" onclick="excluirGuia('${g.id}')">🗑</button>
+          </td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhuma guia gerada</div>Crie uma guia vinculada a um atendimento de convênio.</div>`}
+    </div>`;
+}
+function exportarGuiasCSV(){
+  exportarCSV('guias_tiss.csv',[
+    {titulo:'Paciente',campo:'pacienteNome'},{titulo:'Convênio',campo:'convenioNome'},{titulo:'Procedimento',campo:'procedimentoNome'},
+    {titulo:'Valor',get:g=>Number(g.valor||0).toFixed(2).replace('.',',')},{titulo:'Status',get:g=>guiaStatusLabel(g.status)},{titulo:'Motivo glosa',campo:'motivoGlosa'}
+  ],guiasData);
+}
+function abrirModalGuia(){
+  openModal(`
+    <div class="modalHead"><h3>Nova guia (TISS)</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Convênio</label><select id="gvConvenio">${conveniosData.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="gvPaciente">${convPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Procedimento</label><select id="gvProcedimento" onchange="preencherValorGuia()">
+        <option value="">Selecione</option>${convProcedimentos.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')}
+      </select></div>
+      <div class="field"><label>Valor da guia (R$)</label><input type="number" step="0.01" id="gvValor"></div>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="salvarGuia()">Criar guia</button></div>
+  `);
+}
+function preencherValorGuia(){
+  const convenioId=$('gvConvenio').value, procedimentoId=$('gvProcedimento').value;
+  const preco=tabelaConvenioData.find(t=>t.convenioId===convenioId&&t.procedimentoId===procedimentoId);
+  if(preco) $('gvValor').value=preco.valor;
+}
+async function salvarGuia(){
+  const convenioId=$('gvConvenio').value, pacienteId=$('gvPaciente').value, procedimentoId=$('gvProcedimento').value, valor=parseFloat($('gvValor').value)||0;
+  if(!convenioId||!pacienteId){showToast('Escolha convênio e paciente.','err');return;}
+  const conv=conveniosData.find(c=>c.id===convenioId), pac=convPacientes.find(p=>p.id===pacienteId), proc=convProcedimentos.find(p=>p.id===procedimentoId);
+  guiasData.push({id:uid(),convenioId,convenioNome:conv?conv.nome:'',pacienteId,pacienteNome:pac?pac.nome:'',procedimentoId,procedimentoNome:proc?proc.nome:'',valor,status:'rascunho',criadoEm:new Date().toISOString()});
+  await saveList('guias',guiasData);
+  await registrarAuditoria('Criou guia TISS',pac?pac.nome:'');
+  closeModal(); showToast('Guia criada como rascunho.','ok'); pintarConvenios();
+}
+async function enviarGuia(id){
+  const g=guiasData.find(x=>x.id===id); if(!g) return;
+  const cfg=await loadConfigClinica();
+  if(cfg.tissWebhook){
+    try{
+      await fetch(cfg.tissWebhook,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify(g)});
+      showToast('Guia enviada pro gateway TISS configurado.','ok');
+    }catch(e){ showToast('Falha ao alcançar o gateway — guia marcada como enviada mesmo assim.','err'); }
+  } else {
+    showToast('Sem gateway TISS configurado (Config → Integrações) — marcando como enviada manualmente.','ok');
+  }
+  g.status='enviada'; g.enviadoEm=new Date().toISOString();
+  await saveList('guias',guiasData);
+  pintarConvenios();
+}
+async function reenviarGuia(id){ const g=guiasData.find(x=>x.id===id); if(g){ g.motivoGlosa=''; } await enviarGuia(id); }
+async function marcarGuiaPaga(id){
+  const g=guiasData.find(x=>x.id===id); if(!g) return;
+  g.status='paga';
+  await saveList('guias',guiasData);
+  const lanc=await loadList('lancamentos');
+  lanc.push({id:uid(),tipo:'receita',valor:g.valor,descricao:'Convênio '+g.convenioNome+' — '+g.pacienteNome,categoria:'Convênio',data:hojeISO(),natureza:'variavel',origem:'guia',guiaId:g.id});
+  await saveList('lancamentos',lanc);
+  showToast('Guia paga — lançamento criado no financeiro.','ok'); pintarConvenios();
+}
+async function marcarGuiaGlosada(id){
+  const motivo=prompt('Motivo da glosa (o que o convênio recusou pagar):','');
+  if(motivo===null) return;
+  const g=guiasData.find(x=>x.id===id); if(!g) return;
+  g.status='glosada'; g.motivoGlosa=motivo;
+  await saveList('guias',guiasData);
+  showToast('Guia marcada como glosada.','ok'); pintarConvenios();
+}
+async function excluirGuia(id){
+  if(!confirm('Excluir esta guia?')) return;
+  guiasData=guiasData.filter(x=>x.id!==id);
+  await saveList('guias',guiasData);
+  showToast('Guia excluída.','ok'); pintarConvenios();
+}
+</script>
+<script>
+/* ================= MARKETING: pacientes inativos, campanha de reativação, resultados de NPS ================= */
+let marketingSubTab='inativos'; let marketingDiasInatividade=60;
+function marketingTabsHTML(){
+  return `<div class="gateTabs" style="max-width:420px;margin-bottom:16px">
+    <button class="gateTab ${marketingSubTab==='inativos'?'on':''}" onclick="marketingSubTab='inativos';renderMarketing()">Pacientes inativos</button>
+    <button class="gateTab ${marketingSubTab==='nps'?'on':''}" onclick="marketingSubTab='nps';renderMarketing()">Satisfação (NPS)</button>
+  </div>`;
+}
+async function renderMarketing(){
+  $('topbarActs').innerHTML='';
+  $('content').innerHTML=`${marketingTabsHTML()}<div class="empty">Carregando…</div>`;
+  if(marketingSubTab==='nps') return pintarMarketingNPS();
+  return pintarMarketingInativos();
+}
+async function pintarMarketingInativos(){
+  const [pacientes,agend]=await Promise.all([loadList('pacientes'),loadList('agendamentos')]);
+  const hoje=hojeISO();
+  const ultimaPorPaciente={};
+  agend.forEach(a=>{ if(!ultimaPorPaciente[a.pacienteId]||a.data>ultimaPorPaciente[a.pacienteId]) ultimaPorPaciente[a.pacienteId]=a.data; });
+  const corte=new Date(); corte.setDate(corte.getDate()-marketingDiasInatividade);
+  const corteIso=corte.toISOString().slice(0,10);
+  const inativos=pacientes.filter(p=>p.telefone && (!ultimaPorPaciente[p.id] || ultimaPorPaciente[p.id]<corteIso));
+  $('content').innerHTML=`${marketingTabsHTML()}
+    <div class="toolbar">
+      <label style="font-size:13px;color:var(--ink-soft)">Sem consulta há mais de</label>
+      <input type="number" class="gateInp" style="width:80px" value="${marketingDiasInatividade}" onchange="marketingDiasInatividade=parseInt(this.value)||60;renderMarketing()">
+      <label style="font-size:13px;color:var(--ink-soft)">dias</label>
+      <span style="flex:1"></span>
+      <span class="tag">${inativos.length} paciente(s)</span>
+    </div>
+    <div class="panel">
+      ${inativos.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Última consulta</th><th></th></tr></thead><tbody>
+        ${inativos.map(p=>`<tr><td>${p.nome}</td><td class="mono">${p.telefone}</td><td>${ultimaPorPaciente[p.id]?fmtData(ultimaPorPaciente[p.id]):'Nunca veio'}</td>
+          <td style="text-align:right"><button class="btn sm" onclick="reativarPaciente('${p.id}','${p.nome.replace(/'/g,"\\'")}','${p.telefone}')">Enviar mensagem</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Ninguém na lista</div>Todo mundo teve consulta recentemente, ou ninguém tem telefone cadastrado.</div>`}
+    </div>
+    ${inativos.length?`<div class="toolbar" style="margin-top:14px"><button class="btn primary" onclick="reativarTodos()">Disparar campanha pra todos os ${inativos.length}</button></div>`:''}
+  `;
+  window._marketingInativos=inativos;
+}
+async function reativarPaciente(id,nome,telefone){
+  const cfg=await loadConfigClinica();
+  const msg=`Olá ${nome}! Faz um tempo que você não vem à ${clinicaNome} — que tal agendar um retorno? ${linkAgendamentoPublico()}`;
+  if(cfg.webhookAtivo&&cfg.webhookWhats){
+    try{ await fetch(cfg.webhookWhats,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefone,mensagem:msg,paciente:nome,clinica:clinicaNome})}); showToast('Mensagem enviada pelo fluxo automático.','ok'); return; }catch(e){}
+  }
+  window.open(waLink(telefone,msg),'_blank');
+}
+async function reativarTodos(){
+  const lista=window._marketingInativos||[];
+  if(!lista.length) return;
+  if(!confirm(`Enviar mensagem de reativação pra ${lista.length} paciente(s)?`)) return;
+  const cfg=await loadConfigClinica();
+  if(cfg.webhookAtivo&&cfg.webhookWhats){
+    for(const p of lista){
+      const msg=`Olá ${p.nome}! Faz um tempo que você não vem à ${clinicaNome} — que tal agendar um retorno? ${linkAgendamentoPublico()}`;
+      try{ await fetch(cfg.webhookWhats,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefone:p.telefone,mensagem:msg,paciente:p.nome,clinica:clinicaNome})}); }catch(e){}
+    }
+    await registrarAuditoria('Disparou campanha de reativação',lista.length+' paciente(s)');
+    showToast('Campanha enviada pelo fluxo automático.','ok');
+  } else {
+    showToast('Sem webhook de WhatsApp configurado — abrindo o primeiro paciente pra envio manual (repita pra cada um).','ok');
+    if(lista[0]) reativarPaciente(lista[0].id,lista[0].nome,lista[0].telefone);
+  }
+}
+/* ---- Resultados de satisfação (NPS) ---- */
+async function pintarMarketingNPS(){
+  const avaliacoes=await loadSolicitacoes('avaliacao');
+  const notas=avaliacoes.map(a=>Number(a.payload.nota)).filter(n=>!isNaN(n));
+  const promotores=notas.filter(n=>n>=9).length, neutros=notas.filter(n=>n>=7&&n<9).length, detratores=notas.filter(n=>n<7).length;
+  const nps=notas.length? Math.round(((promotores-detratores)/notas.length)*100) : null;
+  $('content').innerHTML=`${marketingTabsHTML()}
+    <div class="grid cards4" style="margin-bottom:16px">
+      <div class="card kpi"><div class="lbl">NPS</div><div class="val">${nps===null?'—':nps}</div><div class="sub">${notas.length} avaliação(ões)</div></div>
+      <div class="card kpi"><div class="lbl">Promotores (9-10)</div><div class="val" style="color:var(--teal)">${promotores}</div></div>
+      <div class="card kpi"><div class="lbl">Neutros (7-8)</div><div class="val" style="color:var(--amber)">${neutros}</div></div>
+      <div class="card kpi"><div class="lbl">Detratores (0-6)</div><div class="val" style="color:var(--coral)">${detratores}</div></div>
+    </div>
+    <div class="panel">
+      <div class="panelHead"><h2>Comentários recentes</h2></div>
+      ${avaliacoes.length?`<table class="tbl"><thead><tr><th>Data</th><th>Nota</th><th>Comentário</th></tr></thead><tbody>
+        ${avaliacoes.slice(0,50).map(a=>`<tr><td class="mono">${fmtDataHora(a.created_at||a.payload.criadoEm)}</td><td><b>${a.payload.nota}</b></td><td>${a.payload.comentario||'—'}</td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhuma avaliação ainda</div>Use o botão ⭐ num agendamento atendido pra pedir uma avaliação ao paciente.</div>`}
+    </div>`;
+}
+</script>
+<script>
+/* ================= PÁGINAS PÚBLICAS (sem login): agendamento online, NPS, portal do paciente =================
+   Fica ANTES do bloco de INIT de propósito: init() chama initPublicRoute() de forma síncrona assim que a página
+   carrega, então essas funções (e as que elas chamam) precisam já existir nesse momento. */
+async function initPublicRoute(){
+  const params=new URLSearchParams(location.search);
+  const pub=params.get('public');
+  if(!pub) return false;
+  document.getElementById('gate').style.display='none';
+  const el=document.getElementById('publico');
+  el.style.display='block';
+  const codigo=(params.get('c')||'').trim().toUpperCase();
+  if(pub==='agendar') await renderPublicoAgendar(codigo);
+  else if(pub==='avaliar') await renderPublicoAvaliar(codigo,params.get('id')||'');
+  else if(pub==='portal') await renderPublicoPortal(params.get('token')||'');
+  else el.innerHTML=publicoShell('Link inválido','Confira o endereço com a clínica.');
+  return true;
+}
+function publicoShell(titulo,corpoHTML,nomeClinica,logo){
+  return `<div id="gate" style="display:flex"><div class="gateCard">
+    <div class="gateLogo"><div class="mark">${logo?`<img src="${logo}">`:'A+'}</div><div class="name">${nomeClinica||'Agenda+'}</div></div>
+    <h3 class="disp" style="margin:0 0 10px">${titulo}</h3>
+    ${corpoHTML}
+  </div></div>`;
+}
+async function dadosClinicaPublica(codigo){
+  if(!codigo||!sb) return null;
+  try{ const {data}=await sb.from('clinicas').select('nome,logo,cor').eq('grp',codigo).maybeSingle(); return data; }catch(e){ return null; }
+}
+/* ---- Agendamento online: paciente pede um horário, a equipe aprova depois ---- */
+async function renderPublicoAgendar(codigo){
+  const el=document.getElementById('publico');
+  if(!codigo){ el.innerHTML=publicoShell('Link inválido','Peça um novo link de agendamento pra clínica.'); return; }
+  const cli=await dadosClinicaPublica(codigo);
+  if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
+  el.innerHTML=publicoShell('Marque sua consulta',`
+    <p class="gateTitle">Preencha seus dados — a recepção confirma o melhor horário com você em seguida.</p>
+    <label class="gateLab">Seu nome completo</label><input class="gateInp" id="pbNome">
+    <label class="gateLab">WhatsApp</label><input class="gateInp" id="pbTel" placeholder="(11) 99999-9999">
+    <label class="gateLab">Dia desejado</label><input class="gateInp" type="date" id="pbData" min="${hojeISO()}">
+    <label class="gateLab">Horário aproximado</label><input class="gateInp" type="time" id="pbHora">
+    <label class="gateLab">Motivo / observação</label><textarea class="gateInp" id="pbObs" rows="3"></textarea>
+    <button class="gateBtn" onclick="enviarSolicitacaoAgendamento('${codigo}')">Enviar solicitação</button>
+    <div class="gateError" id="pbErr"></div>
+    <div id="pbOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Solicitação enviada! A clínica confirma com você em breve.</div>
+  `,cli&&cli.nome,cli&&cli.logo);
+}
+async function enviarSolicitacaoAgendamento(codigo){
+  const nome=$('pbNome').value.trim(), tel=$('pbTel').value.trim(), data=$('pbData').value, hora=$('pbHora').value, obs=$('pbObs').value.trim();
+  const err=$('pbErr'); err.style.display='none';
+  if(!nome||!tel){ err.textContent='Preencha nome e WhatsApp.'; err.style.display='block'; return; }
+  const r=await publicInsert(codigo,'agendamento',{nome,telefone:tel,data,hora,obs,criadoEm:new Date().toISOString()});
+  if(!r.ok&&!r.demo){ err.textContent='Não consegui enviar agora. Tente de novo em instantes.'; err.style.display='block'; return; }
+  document.querySelectorAll('#publico .gateInp,#publico .gateBtn').forEach(e=>e.style.display='none');
+  $('pbOk').style.display='block';
+}
+/* ---- Fila de espera / encaixe (interno) ---- */
+let filaEsperaData=[];
+async function pintarFilaEspera(){
+  filaEsperaData=await loadList('filaEspera');
+  const solicitacoes=await loadSolicitacoes('agendamento');
+  const pendentes=solicitacoes.filter(s=>s.status==='pendente');
+  return `
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panelHead"><h2>Solicitações de agendamento online</h2><span class="tag">${pendentes.length} pendente(s)</span></div>
+      ${pendentes.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Dia/horário desejado</th><th>Observação</th><th></th></tr></thead><tbody>
+        ${pendentes.map(s=>`<tr><td>${s.payload.nome}</td><td class="mono">${s.payload.telefone}</td><td>${s.payload.data?fmtData(s.payload.data):'—'} ${s.payload.hora||''}</td><td>${s.payload.obs||'—'}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="aprovarSolicitacaoAgendamento('${s.id}')">Aprovar</button> <button class="iconBtn" onclick="recusarSolicitacaoAgendamento('${s.id}')">🗑</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty">Nenhuma solicitação pendente.</div>`}
+    </div>
+    <div class="panel">
+      <div class="panelHead"><h2>Fila de espera (encaixe)</h2><button class="btn sm" onclick="abrirModalFila()">+ Adicionar</button></div>
+      ${filaEsperaData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Preferência</th><th></th></tr></thead><tbody>
+        ${filaEsperaData.map(f=>`<tr><td>${f.pacienteNome}</td><td>${f.preferencia||'—'}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="notificarFila('${f.id}')">Notificar vaga</button> <button class="iconBtn" onclick="removerDaFila('${f.id}')">🗑</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty">Ninguém na fila de espera.</div>`}
+    </div>`;
+}
+async function aprovarSolicitacaoAgendamento(id){
+  const lista=await loadSolicitacoes('agendamento');
+  const s=lista.find(x=>x.id===id); if(!s) return;
+  let pac=agendaPacientes.find(p=>soDigitos(p.telefone)===soDigitos(s.payload.telefone));
+  if(!pac){
+    pac={id:uid(),nome:s.payload.nome,telefone:s.payload.telefone,nascimento:'',obs:'Cadastrado via agendamento online.'};
+    agendaPacientes.push(pac); await saveList('pacientes',agendaPacientes);
+  }
+  const novo={id:uid(),pacienteId:pac.id,pacienteNome:pac.nome,telefone:pac.telefone,data:s.payload.data||hojeISO(),hora:s.payload.hora||'09:00',
+    tipo:'Solicitado online',profissional:'',obs:s.payload.obs||'',status:'agendado',baixaFeita:false};
+  agendaData.push(novo); await saveList('agendamentos',agendaData);
+  await atualizarSolicitacao(id,'aprovada');
+  await registrarAuditoria('Aprovou agendamento online',pac.nome);
+  showToast('Agendamento criado a partir da solicitação.','ok');
+  agendaSelDia=novo.data; pintarAgenda();
+}
+async function recusarSolicitacaoAgendamento(id){
+  if(!confirm('Recusar/excluir esta solicitação?')) return;
+  await excluirSolicitacao(id); showToast('Solicitação removida.','ok'); pintarAgenda();
+}
+function abrirModalFila(){
+  openModal(`
+    <div class="modalHead"><h3>Adicionar à fila de espera</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Paciente</label><select id="flPaciente">${agendaPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Preferência (dia/período)</label><input id="flPref" placeholder="Ex: qualquer manhã esta semana"></div>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="salvarFila()">Adicionar</button></div>
+  `);
+}
+async function salvarFila(){
+  const pacienteId=$('flPaciente').value; if(!pacienteId){showToast('Escolha um paciente.','err');return;}
+  const pac=agendaPacientes.find(p=>p.id===pacienteId);
+  filaEsperaData.push({id:uid(),pacienteId,pacienteNome:pac.nome,telefone:pac.telefone,preferencia:$('flPref').value.trim(),criadoEm:new Date().toISOString()});
+  await saveList('filaEspera',filaEsperaData);
+  closeModal(); showToast('Adicionado à fila de espera.','ok'); pintarAgenda();
+}
+async function notificarFila(id){
+  const f=filaEsperaData.find(x=>x.id===id); if(!f) return;
+  if(!f.telefone){showToast('Esse paciente não tem telefone cadastrado.','err');return;}
+  window.open(waLink(f.telefone,`Olá ${f.pacienteNome}! Abriu uma vaga na agenda da ${clinicaNome} — quer aproveitar? Responda aqui pra combinarmos o horário.`),'_blank');
+}
+async function removerDaFila(id){
+  filaEsperaData=filaEsperaData.filter(f=>f.id!==id);
+  await saveList('filaEspera',filaEsperaData);
+  pintarAgenda();
+}
+/* ---- Portal do paciente: link mágico somente-leitura ---- */
+async function renderPublicoPortal(token){
+  const el=document.getElementById('publico');
+  if(!token){ el.innerHTML=publicoShell('Link inválido','Peça um novo link à clínica.'); return; }
+  const registro=await lerPortalPaciente(token);
+  if(!registro){ el.innerHTML=publicoShell('Link expirado ou inválido','Peça um novo link à clínica para ver seus agendamentos.'); return; }
+  const cli=await dadosClinicaPublica(registro.grp);
+  if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
+  const d=registro.dados||{};
+  el.innerHTML=publicoShell(`Olá, ${d.nome||'paciente'}`,`
+    <p class="gateTitle" style="margin-bottom:6px">Próximos agendamentos</p>
+    ${(d.proximos||[]).length?d.proximos.map(a=>`<div class="card" style="margin-bottom:8px"><b>${fmtData(a.data)} às ${a.hora}</b><br><span style="font-size:12.5px;color:var(--ink-soft)">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''}${a.teleconsulta?' · Teleconsulta':''}</span></div>`).join(''):'<p style="font-size:13px;color:var(--ink-soft)">Nenhum agendamento futuro.</p>'}
+    <p class="gateTitle" style="margin:16px 0 6px">Histórico recente</p>
+    ${(d.historico||[]).length?`<table class="tbl"><tbody>${d.historico.map(a=>`<tr><td>${fmtData(a.data)}</td><td>${a.tipo||'—'}</td><td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td></tr>`).join('')}</tbody></table>`:'<p style="font-size:13px;color:var(--ink-soft)">Sem histórico ainda.</p>'}
+  `,cli&&cli.nome,cli&&cli.logo);
+}
+/* ---- Pesquisa de satisfação (NPS) pós-consulta ---- */
+async function renderPublicoAvaliar(codigo,agendamentoId){
+  const el=document.getElementById('publico');
+  if(!codigo){ el.innerHTML=publicoShell('Link inválido','Peça um novo link à clínica.'); return; }
+  const cli=await dadosClinicaPublica(codigo);
+  if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
+  el.innerHTML=publicoShell('Como foi seu atendimento?',`
+    <p class="gateTitle">De 0 a 10, o quanto você recomendaria a ${cli&&cli.nome?cli.nome:'clínica'} pra um amigo ou familiar?</p>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px" id="npsNotas">
+      ${Array.from({length:11},(_,n)=>`<button class="btn sm" style="min-width:32px" onclick="selecionarNota(${n})" id="nota${n}">${n}</button>`).join('')}
+    </div>
+    <label class="gateLab">Quer contar mais alguma coisa? (opcional)</label>
+    <textarea class="gateInp" id="npsComentario" rows="3"></textarea>
+    <button class="gateBtn" onclick="enviarAvaliacao('${codigo}','${agendamentoId}')">Enviar avaliação</button>
+    <div class="gateError" id="npsErr"></div>
+    <div id="npsOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Obrigado pela avaliação!</div>
+  `,cli&&cli.nome,cli&&cli.logo);
+}
+let npsNotaEscolhida=null;
+function selecionarNota(n){
+  npsNotaEscolhida=n;
+  for(let i=0;i<=10;i++){ const b=$('nota'+i); if(b) b.style.background=(i===n?'var(--teal)':'#fff'); if(b) b.style.color=(i===n?'#fff':'var(--ink)'); }
+}
+async function enviarAvaliacao(codigo,agendamentoId){
+  const err=$('npsErr'); err.style.display='none';
+  if(npsNotaEscolhida===null){ err.textContent='Escolha uma nota de 0 a 10.'; err.style.display='block'; return; }
+  const r=await publicInsert(codigo,'avaliacao',{nota:npsNotaEscolhida,comentario:$('npsComentario').value.trim(),agendamentoId:agendamentoId||'',criadoEm:new Date().toISOString()});
+  if(!r.ok&&!r.demo){ err.textContent='Não consegui enviar agora. Tente de novo.'; err.style.display='block'; return; }
+  document.querySelectorAll('#publico .gateBtn,#publico .gateInp,#npsNotas').forEach(e=>e.style.display='none');
+  $('npsOk').style.display='block';
 }
 </script>
 <script>
@@ -1264,10 +2201,16 @@ async function renderRelatorios(){
       <div class="panel"><div class="panelHead"><h2>Consultas por status (mês atual)</h2></div>
         <div style="padding:18px"><canvas id="cvStatus" height="110"></canvas></div></div>
     </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px">
+      <div class="panel"><div class="panelHead"><h2>Guias de convênio por status</h2></div>
+        <div style="padding:18px"><canvas id="cvGuias" height="110"></canvas></div></div>
+      <div class="panel"><div class="panelHead"><h2>Comissão por profissional (mês atual)</h2></div>
+        <div style="padding:18px"><canvas id="cvComissao" height="110"></canvas></div></div>
+    </div>
     <div class="panel" style="margin-top:16px"><div class="panelHead"><h2>Itens mais consumidos no estoque</h2></div>
       <div style="padding:18px"><canvas id="cvEstoque" height="90"></canvas></div></div>
   `;
-  const [lanc,agend,estoque]=await Promise.all([loadList('lancamentos'),loadList('agendamentos'),loadList('estoque')]);
+  const [lanc,agend,estoque,guias,procs]=await Promise.all([loadList('lancamentos'),loadList('agendamentos'),loadList('estoque'),loadList('guias'),loadList('procedimentos')]);
 
   const meses=[]; const now=new Date();
   for(let i=5;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); meses.push(d.toISOString().slice(0,7)); }
@@ -1296,17 +2239,50 @@ async function renderRelatorios(){
     {label:'Quantidade atual',data:topEstoque.map(i=>Number(i.qtd||0)),backgroundColor:'#3B5C78'},
     {label:'Mínimo',data:topEstoque.map(i=>Number(i.minimo||0)),backgroundColor:'#DCD6C4'}
   ]},options:{responsive:true,indexAxis:'y',plugins:{legend:{position:'bottom'}}}});
+
+  const statusGuia=['rascunho','enviada','paga','glosada'];
+  const contagemGuia=statusGuia.map(s=>guias.filter(g=>g.status===s).length);
+  if(chartGuias) chartGuias.destroy();
+  chartGuias=new Chart($('cvGuias'),{type:'doughnut',data:{labels:['Rascunho','Enviada','Paga','Glosada'],datasets:[{
+    data:contagemGuia,backgroundColor:['#3B5C78','#B9862E','#2F6659','#C1543F']
+  }]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
+
+  const mesAtualComissao=hojeISO().slice(0,7);
+  const custoProc=p=>(p.itens||[]).reduce((s,it)=>{ const e=estoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const precoProc=p=>{ const c=custoProc(p); const m=Number(p.margem||0); return p.precoManual||((m>0&&m<100)?c/(1-m/100):c); };
+  const porProf={};
+  agend.filter(a=>a.status==='atendido'&&a.data.slice(0,7)===mesAtualComissao&&a.procedimentoId).forEach(a=>{
+    const proc=procs.find(p=>p.id===a.procedimentoId); if(!proc||!proc.comissaoPct) return;
+    const v=precoProc(proc)*Number(proc.comissaoPct||0)/100;
+    const prof=a.profissional||'—'; porProf[prof]=(porProf[prof]||0)+v;
+  });
+  const profLabels=Object.keys(porProf), profValores=Object.values(porProf);
+  if(chartComissao) chartComissao.destroy();
+  chartComissao=new Chart($('cvComissao'),{type:'bar',data:{labels:profLabels.length?profLabels:['Sem dados'],datasets:[
+    {label:'Comissão',data:profValores.length?profValores:[0],backgroundColor:'#2F6659'}
+  ]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 }
-let chartEstoqueBar=null;
+let chartEstoqueBar=null, chartGuias=null, chartComissao=null;
 
 /* ================= CONFIGURAÇÕES ================= */
 async function loadConfigClinica(){
   try{ return JSON.parse(await store.get('clinica:config')||'{}'); }catch(e){ return {}; }
 }
+let configSubTab='marca';
+function configTabsHTML(){
+  const abas=[['marca','Marca'],['equipe','Equipe'],['integracoes','Integrações'],['lgpd','LGPD & Auditoria']];
+  return `<div class="gateTabs" style="max-width:560px;margin-bottom:16px">
+    ${abas.map(([k,l])=>`<button class="gateTab ${configSubTab===k?'on':''}" onclick="configSubTab='${k}';renderConfig()">${l}</button>`).join('')}
+  </div>`;
+}
 async function renderConfig(){
   $('topbarActs').innerHTML='';
+  const fns={marca:renderConfigMarca,equipe:renderConfigEquipe,integracoes:renderConfigIntegracoes,lgpd:renderConfigLGPD};
+  await (fns[configSubTab]||renderConfigMarca)();
+}
+async function renderConfigMarca(){
   const cfg=await loadConfigClinica();
-  $('content').innerHTML=`
+  $('content').innerHTML=`${configTabsHTML()}
     <div class="panel" style="max-width:640px;margin-bottom:16px">
       <div class="panelHead"><h2>Marca da clínica</h2></div>
       <div class="modalBody">
@@ -1315,6 +2291,12 @@ async function renderConfig(){
         <div class="formRow">
           <div class="field"><label>Cor principal</label><input type="color" id="cfgCor" value="${cfg.corPrincipal||'#2F6659'}" style="height:42px;padding:4px"></div>
           <div class="field"><label>Logo (imagem)</label><input type="file" id="cfgLogoFile" accept="image/*"></div>
+        </div>
+        <div class="field"><label>Especialidade principal</label>
+          <select id="cfgEspecialidade">
+            ${['Clínico geral','Odontologia','Psicologia','Outra'].map(e=>`<option value="${e}" ${cfg.especialidade===e?'selected':''}>${e}</option>`).join('')}
+          </select>
+          <p style="font-size:11.5px;color:var(--gray);margin:4px 0 0">Define o que aparece no prontuário (odontograma pra Odontologia, sigilo reforçado pra Psicologia) e os modelos de anamnese sugeridos.</p>
         </div>
         ${cfg.logo?`<div style="margin-bottom:10px"><img src="${cfg.logo}" style="height:44px;border-radius:8px;border:1px solid var(--line)"><button class="btn sm" style="margin-left:10px" onclick="removerLogo()">Remover logo</button></div>`:''}
         <button class="btn primary" onclick="salvarMarca()">Salvar marca</button>
@@ -1326,12 +2308,16 @@ async function renderConfig(){
         <div class="field"><label>Código de convite da equipe</label>
           <input class="mono" value="${groupId}" readonly onclick="this.select()">
         </div>
-        <p style="font-size:12.5px;color:var(--ink-soft);margin:-6px 0 0">Compartilhe esse código com quem mais vai usar o Agenda+ nessa clínica — a pessoa cria a conta dela e escolhe "Entrar com código".</p>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin:-6px 0 0">Compartilhe esse código com quem mais vai usar o Agenda+ nessa clínica — a pessoa cria a conta dela, escolhe "Entrar com código" e o perfil dela (profissional/recepção/financeiro).</p>
         <div class="field" style="margin-top:14px"><label>Link de convite (já com a marca da clínica)</label>
           <input class="mono" id="cfgLinkConvite" value="${linkConviteAtual()}" readonly onclick="this.select()">
         </div>
         <button class="btn sm" onclick="copiarLinkConvite()">Copiar link</button>
         <p style="font-size:12.5px;color:var(--ink-soft);margin:8px 0 0">Quem abrir esse link já vê o nome e a logo da clínica antes mesmo de entrar.</p>
+        <div class="field" style="margin-top:14px"><label>Link público de agendamento online (pro paciente marcar sozinho)</label>
+          <input class="mono" value="${linkAgendamentoPublico()}" readonly onclick="this.select()">
+        </div>
+        <button class="btn sm" onclick="copiarTexto(linkAgendamentoPublico())">Copiar link</button>
       </div>
     </div>
     <div class="panel" style="max-width:640px;margin-bottom:16px">
@@ -1339,23 +2325,172 @@ async function renderConfig(){
       <div class="modalBody">
         <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">O botão 💬 na agenda sempre abre o WhatsApp manual com a mensagem pronta. Use <span class="mono">{nome}</span>, <span class="mono">{data}</span>, <span class="mono">{hora}</span> e <span class="mono">{clinica}</span> no texto.</p>
         <div class="field"><textarea id="cfgTpl" rows="3">${cfg.templateLembrete||'Olá {nome}! Passando para lembrar da sua consulta em {data} às {hora} na {clinica}. Para confirmar ou remarcar, é só responder por aqui.'}</textarea></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0">
+          <input type="checkbox" id="cfgConfirmAuto" ${cfg.confirmacaoAutomatica?'checked':''} style="width:auto"> Ao criar um novo agendamento, já preparar a confirmação automática (via webhook, se configurado em Integrações)
+        </label>
         <button class="btn primary" onclick="salvarConfig()">Salvar</button>
       </div>
+    </div>`;
+}
+/* ---- Config > Equipe (perfis de acesso) ---- */
+async function renderConfigEquipe(){
+  $('content').innerHTML=`${configTabsHTML()}<div class="empty">Carregando…</div>`;
+  if(demoMode||!sb){
+    $('content').innerHTML=`${configTabsHTML()}<div class="panel"><div class="empty"><div class="big">Modo demonstração</div>Em demonstração você tem acesso total; a gestão de equipe e perfis passa a existir quando conectar seu Supabase.</div></div>`;
+    return;
+  }
+  let membros=[];
+  try{ const {data}=await sb.from('workspace_members').select('user_id,email,role,created_at').eq('grp',groupId); membros=data||[]; }catch(e){}
+  $('content').innerHTML=`${configTabsHTML()}
+    <div class="panel">
+      <div class="panelHead"><h2>Quem tem acesso à clínica</h2></div>
+      ${membros.length?`<table class="tbl"><thead><tr><th>E-mail</th><th>Perfil</th><th>Desde</th><th></th></tr></thead><tbody>
+        ${membros.map(m=>`<tr><td>${m.email||'—'}</td><td>
+          <select ${m.user_id===sbUser.id&&meuPerfil==='admin'?'':''} onchange="mudarPerfilMembro('${m.user_id}',this.value)" ${meuPerfil!=='admin'?'disabled':''}>
+            ${['admin','profissional','recepcao','financeiro'].map(r=>`<option value="${r}" ${m.role===r?'selected':''}>${PERFIL_LABEL(r)}</option>`).join('')}
+          </select>
+        </td><td>${fmtData((m.created_at||'').slice(0,10))}</td>
+        <td style="text-align:right">${meuPerfil==='admin'&&m.user_id!==sbUser.id?`<button class="iconBtn" title="Remover" onclick="removerMembro('${m.user_id}')">🗑</button>`:''}</td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty">Nenhum membro encontrado.</div>`}
     </div>
-    <div class="panel" style="max-width:640px">
-      <div class="panelHead"><h2>Envio automático (WhatsApp oficial)</h2></div>
+    <p style="font-size:12px;color:var(--gray);max-width:640px;margin-top:10px">
+      <b>Profissional</b>: agenda, prontuário clínico e procedimentos. <b>Recepção</b>: agenda, pacientes, estoque e marketing — sem acesso ao prontuário clínico (sigilo). <b>Financeiro</b>: financeiro, convênios e relatórios. <b>Admin</b>: tudo, inclusive esta tela.
+    </p>`;
+}
+async function mudarPerfilMembro(userId,role){
+  try{
+    const {error}=await sb.from('workspace_members').update({role}).eq('user_id',userId).eq('grp',groupId);
+    if(error) throw error;
+    await registrarAuditoria('Alterou perfil de membro da equipe','user_id='+userId+' → '+role);
+    showToast('Perfil atualizado.','ok');
+    if(userId===sbUser.id) meuPerfil=role;
+    renderConfigEquipe();
+  }catch(e){ showToast('Não foi possível atualizar (verifique se seu perfil é admin).','err'); }
+}
+async function removerMembro(userId){
+  if(!confirm('Remover o acesso dessa pessoa à clínica?')) return;
+  try{
+    await sb.from('workspace_members').delete().eq('user_id',userId).eq('grp',groupId);
+    await registrarAuditoria('Removeu acesso de membro da equipe','user_id='+userId);
+    showToast('Acesso removido.','ok'); renderConfigEquipe();
+  }catch(e){ showToast('Não foi possível remover.','err'); }
+}
+
+/* ---- Config > Integrações (tudo que depende de credencial/contrato externo) ---- */
+async function renderConfigIntegracoes(){
+  const cfg=await loadConfigClinica();
+  $('content').innerHTML=`${configTabsHTML()}
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>WhatsApp (envio automático)</h2></div>
       <div class="modalBody">
-        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Avançado, opcional. Cole aqui a URL de um webhook seu (Zapier, Make, n8n ou um servidor próprio) que receba os dados e envie pela API oficial do WhatsApp — assim sua chave/token fica protegida no seu servidor, nunca aqui no navegador.</p>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Cole a URL de um webhook seu (Zapier, Make, n8n ou servidor próprio) que receba os dados e envie pela API oficial do WhatsApp Business — sua chave/token fica protegida no seu servidor, nunca aqui no navegador.</p>
         <div class="field"><label>URL do webhook</label><input id="cfgWebhook" placeholder="https://hook.us1.make.com/xxxxxxxx" value="${cfg.webhookWhats||''}"></div>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px">
           <input type="checkbox" id="cfgWebhookOn" ${cfg.webhookAtivo?'checked':''} style="width:auto"> Usar envio automático em vez do link manual quando o webhook estiver configurado
         </label>
         <button class="btn primary" onclick="salvarWebhook()">Salvar</button>
         <button class="btn sm" onclick="testarWebhook()">Enviar teste</button>
-        <p style="font-size:11.5px;color:var(--gray);margin-top:10px">O Agenda+ envia um POST em JSON: <span class="mono">{telefone, mensagem, paciente, data, hora, clinica}</span>. Seu fluxo no Zapier/Make/n8n é quem efetivamente chama a API do WhatsApp Business.</p>
+        <p style="font-size:11.5px;color:var(--gray);margin-top:10px">Envia POST em JSON: <span class="mono">{telefone, mensagem, paciente, data, hora, clinica}</span>.</p>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Prescrição eletrônica (Memed)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Crie uma conta gratuita em <a href="https://memed.com.br" target="_blank" rel="noopener">memed.com.br</a> e cole aqui o token de integração da sua clínica. Com o token, o botão "Prescrever" no prontuário abre o editor de receita do Memed com validade jurídica (assinatura eletrônica ICP-Brasil integrada por eles).</p>
+        <div class="field"><label>Token Memed</label><input id="cfgMemedToken" placeholder="Cole aqui o token fornecido pela Memed" value="${cfg.memedToken||''}"></div>
+        <button class="btn primary" onclick="salvarIntegracao('memedToken','cfgMemedToken')">Salvar</button>
+        <p style="font-size:11.5px;color:var(--gray);margin-top:10px">${cfg.memedToken?'✓ Configurado — o botão "Prescrever" já aparece no prontuário.':'Sem token, o botão "Prescrever" fica visível mas avisa que falta configurar.'}</p>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Assinatura digital do prontuário (ICP-Brasil)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Pra dar validade jurídica plena (nível NGS2 da norma CFM/SBIS) e eliminar o papel, cada evolução do prontuário precisa ser assinada com certificado ICP-Brasil. Contrate um provedor de assinatura em nuvem (ex: Bird ID, VIDaaS, Certisign) e cole aqui a URL do webhook de assinatura deles (ou seu próprio servidor-ponte).</p>
+        <div class="field"><label>URL do webhook de assinatura</label><input id="cfgAssinaturaWebhook" placeholder="https://sua-integracao.com/assinar" value="${cfg.assinaturaWebhook||''}"></div>
+        <button class="btn primary" onclick="salvarIntegracao('assinaturaWebhook','cfgAssinaturaWebhook')">Salvar</button>
+        <p style="font-size:11.5px;color:var(--gray);margin-top:10px">${cfg.assinaturaWebhook?'✓ Configurado — o botão "Assinar evolução" já envia pro seu provedor.':'Sem webhook, o botão "Assinar evolução" marca a evolução como assinada localmente (sem validade ICP-Brasil), só pra travar edição.'}</p>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Faturamento de convênios (TISS/TUSS)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">O envio do lote TISS em XML pra operadora normalmente passa por um gateway (ex: TISSNet, MEDTISS, ou sua própria integração). Cadastre os convênios em <b>Convênios</b> e, quando tiver o webhook do gateway, cole aqui — o botão "Enviar guia" passa a transmitir de verdade.</p>
+        <div class="field"><label>URL do webhook de envio TISS</label><input id="cfgTissWebhook" placeholder="https://seu-gateway-tiss.com/enviar" value="${cfg.tissWebhook||''}"></div>
+        <button class="btn primary" onclick="salvarIntegracao('tissWebhook','cfgTissWebhook')">Salvar</button>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Pagamento online (Pix / cartão)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Contrate um gateway (Mercado Pago, Stripe, PagSeguro…) e cole aqui o webhook que gera o link/QR Code de cobrança. O botão "Gerar cobrança" no Financeiro passa a criar um link real pro paciente pagar.</p>
+        <div class="field"><label>URL do webhook de pagamento</label><input id="cfgPagWebhook" placeholder="https://seu-gateway.com/cobrar" value="${cfg.pagamentoWebhook||''}"></div>
+        <button class="btn primary" onclick="salvarIntegracao('pagamentoWebhook','cfgPagWebhook')">Salvar</button>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px">
+      <div class="panelHead"><h2>Nota fiscal de serviço (NFS-e)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Emissão de NFS-e depende da prefeitura do seu município. Use um emissor (ex: NFe.io, eNotas, Focus NFe) e cole aqui o webhook — o botão "Emitir nota" no Financeiro passa a emitir de verdade.</p>
+        <div class="field"><label>URL do webhook de emissão</label><input id="cfgNfseWebhook" placeholder="https://seu-emissor.com/emitir" value="${cfg.nfseWebhook||''}"></div>
+        <button class="btn primary" onclick="salvarIntegracao('nfseWebhook','cfgNfseWebhook')">Salvar</button>
       </div>
     </div>`;
 }
+async function salvarIntegracao(campo,inputId){
+  const cfg=await loadConfigClinica();
+  cfg[campo]=$(inputId).value.trim();
+  await store.set('clinica:config',JSON.stringify(cfg));
+  await registrarAuditoria('Atualizou integração',campo);
+  showToast('Integração salva.','ok'); renderConfigIntegracoes();
+}
+
+/* ---- Config > LGPD & Auditoria ---- */
+async function renderConfigLGPD(){
+  const cfg=await loadConfigClinica();
+  const log=await loadList('auditoria');
+  $('content').innerHTML=`${configTabsHTML()}
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Termo de consentimento (LGPD)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Esse texto é mostrado e assinado (marcado como aceito) por cada paciente novo, na ficha de cadastro. Dados de saúde são "dados sensíveis" pela LGPD — sempre peça consentimento explícito.</p>
+        <div class="field"><textarea id="cfgTermoLgpd" rows="6">${cfg.termoLgpd||'Autorizo o tratamento dos meus dados pessoais e de saúde por esta clínica, exclusivamente para fins de agendamento, atendimento clínico, financeiro e comunicação sobre minhas consultas, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018). Sei que posso solicitar a qualquer momento a exportação ou exclusão dos meus dados.'}</textarea></div>
+        <button class="btn primary" onclick="salvarTermoLgpd()">Salvar termo</button>
+      </div>
+    </div>
+    <div class="panel" style="max-width:680px;margin-bottom:16px">
+      <div class="panelHead"><h2>Exportar todos os dados da clínica</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Baixa um arquivo JSON com pacientes, agendamentos, prontuários, financeiro e estoque — útil pra backup ou pra atender um pedido de portabilidade de dados.</p>
+        <button class="btn primary" onclick="exportarTudoJSON()">Exportar tudo (.json)</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panelHead"><h2>Log de auditoria</h2><span class="tag">últimas ${Math.min(log.length,100)} ações</span></div>
+      ${log.length?`<table class="tbl"><thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Detalhe</th></tr></thead><tbody>
+        ${log.slice(0,100).map(l=>`<tr><td class="mono">${fmtDataHora(l.quando)}</td><td>${l.usuario}</td><td>${l.acao}</td><td style="color:var(--ink-soft)">${l.detalhe||''}</td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty">Nenhuma ação registrada ainda.</div>`}
+    </div>`;
+}
+async function salvarTermoLgpd(){
+  const cfg=await loadConfigClinica();
+  cfg.termoLgpd=$('cfgTermoLgpd').value;
+  await store.set('clinica:config',JSON.stringify(cfg));
+  showToast('Termo salvo.','ok');
+}
+async function exportarTudoJSON(){
+  const chaves=['pacientes','agendamentos','lancamentos','contas','estoque','procedimentos','evolucoes','convenios','odontogramas','anamneseModelos','planosRecorrentes','filaEspera'];
+  const tudo={};
+  for(const k of chaves) tudo[k]=await loadList(k);
+  tudo.exportadoEm=new Date().toISOString();
+  const blob=new Blob([JSON.stringify(tudo,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='dados_clinica_'+hojeISO()+'.json'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+  await registrarAuditoria('Exportou todos os dados da clínica (LGPD/backup)');
+  showToast('Exportação gerada.','ok');
+}
+function copiarTexto(t){ navigator.clipboard.writeText(t).then(()=>showToast('Copiado!','ok'),()=>showToast('Não consegui copiar.','err')); }
+
 async function salvarWebhook(){
   const cfg=await loadConfigClinica();
   cfg.webhookWhats=$('cfgWebhook').value.trim();
@@ -1384,6 +2519,7 @@ async function salvarMarca(){
   const cfg=await loadConfigClinica();
   cfg.nomeExibicao=$('cfgNomeExib').value.trim();
   cfg.corPrincipal=$('cfgCor').value;
+  cfg.especialidade=$('cfgEspecialidade')?$('cfgEspecialidade').value:cfg.especialidade;
   const file=$('cfgLogoFile').files[0];
   if(file){
     if(file.size>800*1024){ showToast('Escolha uma imagem menor (até 800KB).','err'); return; }
@@ -1411,6 +2547,7 @@ async function removerLogo(){
 async function salvarConfig(){
   const cfg=await loadConfigClinica();
   cfg.templateLembrete=$('cfgTpl').value;
+  cfg.confirmacaoAutomatica=$('cfgConfirmAuto')?$('cfgConfirmAuto').checked:cfg.confirmacaoAutomatica;
   await store.set('clinica:config',JSON.stringify(cfg));
   showToast('Configurações salvas.','ok');
 }
@@ -1430,7 +2567,9 @@ async function salvarConfig(){
   }catch(e){}
   const codigoUrl=(new URLSearchParams(location.search)).get('c');
   if(codigoUrl) prefillCodigo=codigoUrl.trim().toUpperCase();
-  if(!initSupabase()){ showCfg(true); return; }
+  initSupabase();
+  if(await initPublicRoute()) return;
+  if(!sb){ showCfg(true); return; }
   if(prefillCodigo){
     try{
       const {data}=await sb.from('clinicas').select('nome,logo,cor').eq('grp',prefillCodigo).maybeSingle();
@@ -1458,4 +2597,13 @@ async function copiarLinkConvite(){
   try{ await navigator.clipboard.writeText(linkConviteAtual()); showToast('Link copiado!','ok'); }
   catch(e){ showToast('Não consegui copiar automaticamente — selecione e copie manualmente.','err'); }
 }
+function linkAgendamentoPublico(){
+  const url=new URL(location.href); url.search=''; url.searchParams.set('public','agendar'); url.searchParams.set('c',groupId);
+  return url.toString();
+}
+function linkAvaliacaoPublica(agendamentoId){
+  const url=new URL(location.href); url.search=''; url.searchParams.set('public','avaliar'); url.searchParams.set('c',groupId); url.searchParams.set('id',agendamentoId||'');
+  return url.toString();
+}
+</script>
 
