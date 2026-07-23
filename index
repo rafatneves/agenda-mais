@@ -1,0 +1,1461 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Agenda+">
+<meta name="theme-color" content="#20281F">
+<title>Agenda+ — Gestão de Consultórios</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https: wss://*.supabase.co; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.2/dist/umd/supabase.js" integrity="sha256-IQNc5P+28dbFulNEu6yDCb85TNu6CxNxJnoFodgR/tg=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F6F3EA; --paper2:#EFEADB; --ink:#20281F; --ink-soft:#5B6358;
+  --line:#DCD6C4; --line-soft:#E8E2D0;
+  --teal:#2F6659; --teal-soft:#DEEAE3;
+  --coral:#C1543F; --coral-soft:#F3DED7;
+  --amber:#B9862E; --amber-soft:#F1E4C6;
+  --blue:#3B5C78; --blue-soft:#DFE6EE;
+  --gray:#8B8272;
+  --shadow:0 1px 0 #fff9 inset, 0 10px 28px -18px #20281F4d;
+  --sidebar-w:216px; --header-h:60px;
+  --radius-lg:16px; --radius-md:11px; --radius-sm:7px;
+  font-family:'Inter',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);height:100%}
+body{-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.45}
+h1,h2,h3,.disp{font-family:'Newsreader',serif;font-weight:600;letter-spacing:-.01em}
+.mono{font-family:'IBM Plex Mono',monospace}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--teal)}
+::selection{background:var(--teal-soft)}
+
+#gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:
+  radial-gradient(1200px 600px at 15% -10%, #ffffff 0%, transparent 55%), var(--paper);}
+.gateCard{width:100%;max-width:400px;background:#fff;border:1px solid var(--line);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow);padding:32px 28px}
+.gateLogo{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+.gateLogo .mark{width:34px;height:34px;border-radius:9px;background:var(--teal);color:#fff;display:flex;
+  align-items:center;justify-content:center;font-family:'Newsreader',serif;font-weight:700;font-size:18px}
+.gateLogo .name{font-family:'Newsreader',serif;font-weight:600;font-size:20px}
+.gateTitle{font-size:15px;color:var(--ink-soft);margin:0 0 20px}
+.gateLab{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+.gateInp{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--paper);
+  outline:none;transition:border-color .15s}
+.gateInp:focus{border-color:var(--teal)}
+.gateBtn{width:100%;margin-top:20px;padding:12px;border:none;border-radius:var(--radius-sm);background:var(--teal);
+  color:#fff;font-weight:600;font-size:14px;transition:opacity .15s}
+.gateBtn:hover{opacity:.92}
+.gateBtn.ghost{background:transparent;color:var(--teal);border:1px solid var(--line);margin-top:8px}
+.gateSwitch{margin-top:18px;text-align:center;font-size:13px;color:var(--ink-soft)}
+.gateSwitch a{cursor:pointer;font-weight:600;text-decoration:none}
+.gateError{background:var(--coral-soft);color:var(--coral);border-radius:var(--radius-sm);padding:9px 11px;font-size:13px;margin-top:14px;display:none}
+.gateTabs{display:flex;gap:6px;background:var(--paper2);padding:4px;border-radius:10px;margin-bottom:18px}
+.gateTab{flex:1;text-align:center;padding:8px;border-radius:8px;font-size:13px;font-weight:600;color:var(--ink-soft);transition:.15s;border:none;background:none}
+.gateTab.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
+.gateFoot{margin-top:22px;text-align:center}
+.gateFoot a{font-size:11.5px;color:var(--gray);text-decoration:none}
+
+#app{display:none}
+#app.on{display:block}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:var(--sidebar-w);background:#fff;border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:18px 12px;z-index:20}
+.sbBrand{display:flex;align-items:center;gap:9px;padding:6px 8px 20px}
+.sbBrand .mark{width:28px;height:28px;border-radius:8px;background:var(--teal);color:#fff;display:flex;align-items:center;
+  justify-content:center;font-family:'Newsreader',serif;font-weight:700;font-size:15px;flex:none}
+.sbBrand .name{font-family:'Newsreader',serif;font-weight:600;font-size:17px}
+.sbClinic{padding:0 8px 14px;font-size:11.5px;color:var(--gray);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line-soft);margin-bottom:10px}
+.navItem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);color:var(--ink-soft);
+  font-weight:500;font-size:13.5px;margin-bottom:2px;transition:.12s;border:none;background:none;width:100%;text-align:left}
+.navItem:hover{background:var(--paper2)}
+.navItem.on{background:var(--teal-soft);color:var(--teal);font-weight:600}
+.navItem .ic{width:17px;text-align:center;font-size:14px;flex:none}
+.sbFoot{margin-top:auto;padding:10px 8px 0;border-top:1px solid var(--line-soft)}
+.sbUser{font-size:12px;color:var(--gray);margin-bottom:8px;word-break:break-all}
+.sbLogout{font-size:12.5px;color:var(--coral);background:none;border:none;font-weight:600;padding:0}
+
+.main{margin-left:var(--sidebar-w);min-height:100vh}
+.topbar{position:sticky;top:0;height:var(--header-h);background:var(--paper)ee;backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 26px;z-index:10}
+.topbar h1{font-size:19px;margin:0}
+.menuBtn{display:none;background:none;border:none;font-size:20px}
+.content{padding:26px}
+
+.grid{display:grid;gap:14px}
+.cards4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:980px){.cards4{grid-template-columns:repeat(2,1fr)}}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius-md);padding:16px 18px;box-shadow:var(--shadow)}
+.kpi .lbl{font-size:11.5px;color:var(--gray);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.kpi .val{font-family:'Newsreader',serif;font-size:26px;font-weight:600}
+.kpi .sub{font-size:12px;color:var(--ink-soft);margin-top:4px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow);overflow:hidden}
+.panelHead{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line-soft)}
+.panelHead h2{font-size:16px;margin:0}
+.btn{padding:9px 14px;border-radius:var(--radius-sm);border:1px solid var(--line);background:#fff;font-weight:600;font-size:13px;transition:.12s}
+.btn:hover{background:var(--paper2)}
+.btn.primary{background:var(--teal);color:#fff;border-color:var(--teal)}
+.btn.primary:hover{opacity:.9}
+.btn.danger{background:var(--coral-soft);color:var(--coral);border-color:var(--coral-soft)}
+.btn.sm{padding:6px 10px;font-size:12px}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);padding:8px 18px;border-bottom:1px solid var(--line)}
+.tbl td{padding:11px 18px;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--paper2)}
+.badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11.5px;font-weight:600}
+.badge.agendado{background:var(--blue-soft);color:var(--blue)}
+.badge.confirmado{background:var(--teal-soft);color:var(--teal)}
+.badge.atendido{background:var(--line-soft);color:var(--ink-soft)}
+.badge.faltou{background:var(--amber-soft);color:var(--amber)}
+.badge.cancelado{background:var(--coral-soft);color:var(--coral)}
+.empty{padding:40px 20px;text-align:center;color:var(--gray)}
+.empty .big{font-family:'Newsreader',serif;font-size:16px;color:var(--ink-soft);margin-bottom:4px}
+.formRow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field{margin-bottom:13px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:5px}
+.field input,.field select,.field textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:var(--radius-sm);
+  background:var(--paper);outline:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--teal)}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.search{flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:var(--radius-sm);background:#fff}
+
+.modalBg{position:fixed;inset:0;background:#20281f66;display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modalBg.on{display:flex}
+.modal{background:#fff;border-radius:var(--radius-lg);max-width:520px;width:100%;max-height:88vh;overflow:auto;
+  box-shadow:0 20px 60px -20px #0006}
+.modalHead{padding:18px 22px;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between;align-items:center}
+.modalHead h3{margin:0;font-size:17px}
+.modalX{background:none;border:none;font-size:20px;color:var(--gray);line-height:1}
+.modalBody{padding:20px 22px}
+.modalFoot{padding:16px 22px;border-top:1px solid var(--line-soft);display:flex;justify-content:flex-end;gap:10px}
+
+#toastWrap{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--ink);color:#fff;padding:11px 16px;border-radius:var(--radius-sm);font-size:13px;box-shadow:0 8px 24px -8px #0006;
+  animation:tin .18s ease}
+.toast.ok{background:var(--teal)}
+.toast.err{background:var(--coral)}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+.agendaWrap{display:flex;gap:18px}
+.agendaCal{width:220px;flex:none}
+.miniCal{background:#fff;border:1px solid var(--line);border-radius:var(--radius-md);padding:14px}
+.miniCal .mcHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-weight:600;font-size:13px}
+.miniCal .mcNav{background:none;border:none;color:var(--ink-soft);font-size:15px;padding:2px 6px}
+.miniCal .mcGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:11.5px}
+.miniCal .mcDow{color:var(--gray);padding:4px 0}
+.miniCal .mcDay{padding:6px 0;border-radius:7px;cursor:pointer;color:var(--ink-soft)}
+.miniCal .mcDay:hover{background:var(--paper2)}
+.miniCal .mcDay.today{font-weight:700;color:var(--teal)}
+.miniCal .mcDay.sel{background:var(--teal);color:#fff}
+.miniCal .mcDay.off{color:var(--line)}
+.dayTimeline{flex:1;position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--radius-md);padding:6px 0}
+.dtRow{display:flex;border-bottom:1px solid var(--line-soft);min-height:64px}
+.dtRow:last-child{border-bottom:none}
+.dtHour{width:64px;flex:none;text-align:right;padding:8px 12px 0 0;font-size:11.5px;color:var(--gray);font-family:'IBM Plex Mono',monospace}
+.dtSlot{flex:1;position:relative;padding:6px 10px}
+.apptCard{background:var(--teal-soft);border-left:3px solid var(--teal);border-radius:8px;padding:8px 11px;margin-bottom:5px;
+  display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;transition:.12s}
+.apptCard:hover{filter:brightness(.97)}
+.apptCard.faltou{background:var(--amber-soft);border-color:var(--amber)}
+.apptCard.cancelado{background:var(--coral-soft);border-color:var(--coral);opacity:.7}
+.apptCard.atendido{background:var(--line-soft);border-color:var(--gray)}
+.apptCard .who{font-weight:600;font-size:13px}
+.apptCard .what{font-size:12px;color:var(--ink-soft)}
+.apptActs{display:flex;gap:4px}
+.iconBtn{background:none;border:none;color:var(--ink-soft);font-size:14px;padding:3px 5px;border-radius:6px}
+.iconBtn:hover{background:#fff}
+
+.mark img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.stockLow{color:var(--coral);font-weight:600}
+.tag{display:inline-block;padding:2px 8px;border-radius:99px;background:var(--paper2);font-size:11px;color:var(--ink-soft)}
+@media(max-width:860px){
+  .sidebar{transform:translateX(-100%);transition:transform .2s}
+  .sidebar.on{transform:translateX(0)}
+  .main{margin-left:0}
+  .menuBtn{display:block}
+  .agendaWrap{flex-direction:column}
+  .agendaCal{width:100%}
+  .formRow{grid-template-columns:1fr}
+}
+</style>
+
+<div id="gate">
+  <div class="gateCard">
+    <div class="gateLogo"><div class="mark" id="gateMark">A+</div><div class="name" id="gateName">Agenda+</div></div>
+
+    <div id="gateAuth">
+      <div class="gateTabs">
+        <button class="gateTab on" id="tabLogin" onclick="setAuthTab('login')">Entrar</button>
+        <button class="gateTab" id="tabSignup" onclick="setAuthTab('signup')">Criar conta</button>
+      </div>
+      <p class="gateTitle" id="authSub">Acesse o painel da sua clínica.</p>
+      <label class="gateLab">E-mail</label>
+      <input class="gateInp" id="authEmail" type="email" placeholder="voce@clinica.com" autocomplete="email">
+      <label class="gateLab">Senha</label>
+      <input class="gateInp" id="authPass" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="gateBtn" id="authBtn" onclick="doAuth()">Entrar</button>
+      <div class="gateError" id="authErr"></div>
+    </div>
+
+    <div id="gateOnboard" style="display:none">
+      <p class="gateTitle">Sua conta ainda não está ligada a nenhuma clínica.</p>
+      <div class="gateTabs">
+        <button class="gateTab on" id="tabCreate" onclick="setOnbTab('create')">Criar clínica</button>
+        <button class="gateTab" id="tabJoin" onclick="setOnbTab('join')">Entrar com código</button>
+      </div>
+      <div id="onbCreate">
+        <label class="gateLab">Nome da clínica</label>
+        <input class="gateInp" id="onbNome" placeholder="Ex: Clínica Bem Cuidar">
+      </div>
+      <div id="onbJoin" style="display:none">
+        <label class="gateLab">Código da clínica</label>
+        <input class="gateInp" id="onbCodigo" placeholder="Ex: BEMCUIDAR7X2" style="text-transform:uppercase">
+        <p style="font-size:12px;color:var(--ink-soft);margin-top:8px">Peça o código de convite pra quem já usa o Clara na sua clínica (fica em Configurações).</p>
+      </div>
+      <button class="gateBtn" onclick="doOnboard()">Continuar</button>
+      <div class="gateError" id="onbErr"></div>
+    </div>
+
+    <button class="gateBtn ghost" onclick="enterDemo()">Ver demonstração (sem configurar nada)</button>
+    <div class="gateFoot"><a onclick="showCfg(true)">Configurar conexão (Supabase)</a></div>
+  </div>
+</div>
+
+<div class="modalBg" id="cfgModal">
+  <div class="modal">
+    <div class="modalHead"><h3>Conexão com o banco de dados</h3><button class="modalX" onclick="showCfg(false)">&times;</button></div>
+    <div class="modalBody">
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:0">O Clara guarda os dados num projeto Supabase. Cole abaixo a URL e a chave <b>anon/public</b> do seu projeto.</p>
+      <div class="field"><label>Project URL</label><input id="cfgUrl" placeholder="https://xxxx.supabase.co"></div>
+      <div class="field"><label>Anon public key</label><input id="cfgKey" placeholder="eyJhbGciOi..."></div>
+      <div class="gateError" id="cfgErr"></div>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="showCfg(false)">Cancelar</button><button class="btn primary" onclick="saveCfg()">Salvar e recarregar</button></div>
+  </div>
+</div>
+
+<div id="app">
+  <nav class="sidebar" id="sidebar">
+    <div class="sbBrand"><div class="mark" id="sbMark">A+</div><div class="name" id="sbName">Agenda+</div></div>
+    <div class="sbClinic" id="sbClinicName">clínica</div>
+    <button class="navItem" data-tab="dashboard" onclick="goTab('dashboard')"><span class="ic">◆</span>Painel</button>
+    <button class="navItem" data-tab="agenda" onclick="goTab('agenda')"><span class="ic">▤</span>Agenda</button>
+    <button class="navItem" data-tab="pacientes" onclick="goTab('pacientes')"><span class="ic">☺</span>Pacientes</button>
+    <button class="navItem" data-tab="financeiro" onclick="goTab('financeiro')"><span class="ic">$</span>Financeiro</button>
+    <button class="navItem" data-tab="estoque" onclick="goTab('estoque')"><span class="ic">▦</span>Estoque</button>
+    <button class="navItem" data-tab="procedimentos" onclick="goTab('procedimentos')"><span class="ic">✚</span>Procedimentos</button>
+    <button class="navItem" data-tab="relatorios" onclick="goTab('relatorios')"><span class="ic">▲</span>Relatórios</button>
+    <button class="navItem" data-tab="config" onclick="goTab('config')"><span class="ic">⚙</span>Configurações</button>
+    <div class="sbFoot">
+      <div class="sbUser" id="sbUserEmail"></div>
+      <button class="sbLogout" onclick="doLogout()">Sair</button>
+    </div>
+  </nav>
+  <div class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="menuBtn" onclick="document.getElementById('sidebar').classList.toggle('on')">☰</button>
+        <h1 id="pageTitle">Painel</h1>
+      </div>
+      <div id="topbarActs"></div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<div class="modalBg" id="modalBg"><div class="modal" id="modalBox"></div></div>
+<div id="toastWrap"></div>
+<script>
+'use strict';
+/* ================= CONFIG / SUPABASE ================= */
+const CFG_URL='agendamais:cfg:url', CFG_KEY='agendamais:cfg:key';
+// Sem projeto padrão: cada clínica (ou cada revenda do Clara) conecta o próprio Supabase.
+// Rode o SQL abaixo (uma vez, no SQL editor do Supabase) antes do primeiro uso:
+/*
+create table if not exists painel(grp text not null, k text not null, value jsonb, updated_at timestamptz default now(), primary key(grp,k));
+alter table painel enable row level security;
+create table if not exists workspace_members(user_id uuid references auth.users(id) primary key, grp text not null, role text default 'admin', created_at timestamptz default now());
+alter table workspace_members enable row level security;
+create table if not exists clinicas(grp text primary key, nome text not null, logo text, cor text, created_at timestamptz default now());
+alter table clinicas enable row level security;
+
+create policy painel_rw on painel for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+create policy wm_own_select on workspace_members for select using (user_id=auth.uid());
+create policy wm_own_insert on workspace_members for insert with check (user_id=auth.uid());
+create policy clinicas_select_public on clinicas for select using (true);
+create policy clinicas_insert_auth on clinicas for insert with check (auth.uid() is not null);
+create policy clinicas_update_members on clinicas for update using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+*/
+let sb=null, sbUser=null, groupId=null, clinicaNome='';
+function initSupabase(){
+  const url=localStorage.getItem(CFG_URL), key=localStorage.getItem(CFG_KEY);
+  if(url&&key&&window.supabase){sb=window.supabase.createClient(url,key);return true;}
+  return false;
+}
+function showCfg(on){
+  document.getElementById('cfgModal').classList.toggle('on',on);
+  if(on){document.getElementById('cfgUrl').value=localStorage.getItem(CFG_URL)||'';document.getElementById('cfgKey').value=localStorage.getItem(CFG_KEY)||'';}
+}
+function saveCfg(){
+  const url=document.getElementById('cfgUrl').value.trim(), key=document.getElementById('cfgKey').value.trim();
+  const err=document.getElementById('cfgErr');
+  if(!url||!key){err.textContent='Preencha URL e chave.';err.style.display='block';return;}
+  localStorage.setItem(CFG_URL,url);localStorage.setItem(CFG_KEY,key);
+  location.reload();
+}
+
+/* ================= AUTH ================= */
+let authMode='login';
+function setAuthTab(m){
+  authMode=m;
+  document.getElementById('tabLogin').classList.toggle('on',m==='login');
+  document.getElementById('tabSignup').classList.toggle('on',m==='signup');
+  document.getElementById('authBtn').textContent=m==='login'?'Entrar':'Criar conta';
+  document.getElementById('authSub').textContent=m==='login'?'Acesse o painel da sua clínica.':'Leva menos de um minuto.';
+  document.getElementById('authErr').style.display='none';
+}
+async function doAuth(){
+  if(!sb){showCfg(true);return;}
+  const email=document.getElementById('authEmail').value.trim(), pass=document.getElementById('authPass').value;
+  const err=document.getElementById('authErr'); err.style.display='none';
+  if(!email||!pass){err.textContent='Preencha e-mail e senha.';err.style.display='block';return;}
+  try{
+    let res;
+    if(authMode==='login') res=await sb.auth.signInWithPassword({email,password:pass});
+    else res=await sb.auth.signUp({email,password:pass});
+    if(res.error) throw res.error;
+    if(authMode==='signup'&&!res.data.session){
+      err.style.color='var(--teal)';err.style.background='var(--teal-soft)';
+      err.textContent='Conta criada! Se seu projeto exigir confirmação por e-mail, confirme antes de entrar.';
+      err.style.display='block'; return;
+    }
+    await afterLogin();
+  }catch(e){err.textContent=traduzErro(e.message);err.style.display='block';}
+}
+function traduzErro(m){
+  if(/Invalid login credentials/i.test(m))return 'E-mail ou senha incorretos.';
+  if(/already registered/i.test(m))return 'Esse e-mail já tem conta — tente entrar.';
+  if(/Password should be/i.test(m))return 'Senha muito curta (mínimo 6 caracteres).';
+  return m;
+}
+async function doLogout(){try{await sb.auth.signOut();}catch(e){} sbUser=null;groupId=null;location.reload();}
+
+async function afterLogin(){
+  const {data}=await sb.auth.getSession();
+  sbUser=data&&data.session?data.session.user:null;
+  if(!sbUser) return;
+  const {data:wm}=await sb.from('workspace_members').select('grp').eq('user_id',sbUser.id).maybeSingle();
+  if(wm&&wm.grp){ groupId=wm.grp; await bootApp(); }
+  else{
+    document.getElementById('gateAuth').style.display='none'; document.getElementById('gateOnboard').style.display='block';
+    if(prefillCodigo){ setOnbTab('join'); $('onbCodigo').value=prefillCodigo; }
+  }
+}
+
+/* ---- onboarding: criar clínica nova ou entrar com código ---- */
+let onbMode='create'; let prefillCodigo=null;
+function setOnbTab(m){
+  onbMode=m;
+  document.getElementById('tabCreate').classList.toggle('on',m==='create');
+  document.getElementById('tabJoin').classList.toggle('on',m==='join');
+  document.getElementById('onbCreate').style.display=m==='create'?'block':'none';
+  document.getElementById('onbJoin').style.display=m==='join'?'block':'none';
+}
+function slugCodigo(nome){
+  const base=(nome||'clinica').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/g,'').slice(0,10)||'CLINICA';
+  return base+Math.random().toString(36).slice(2,6).toUpperCase();
+}
+async function doOnboard(){
+  const err=document.getElementById('onbErr'); err.style.display='none';
+  try{
+    if(onbMode==='create'){
+      const nome=document.getElementById('onbNome').value.trim();
+      if(!nome){err.textContent='Digite o nome da clínica.';err.style.display='block';return;}
+      const codigo=slugCodigo(nome);
+      const {error:e1}=await sb.from('clinicas').insert({grp:codigo,nome});
+      if(e1) throw e1;
+      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:'admin'});
+      if(e2) throw e2;
+      groupId=codigo; clinicaNome=nome;
+      await store.set('clinica:info',JSON.stringify({nome,codigo}));
+    } else {
+      const codigo=document.getElementById('onbCodigo').value.trim().toUpperCase();
+      if(!codigo){err.textContent='Digite o código da clínica.';err.style.display='block';return;}
+      const {data:cli,error:e0}=await sb.from('clinicas').select('nome').eq('grp',codigo).maybeSingle();
+      if(e0) throw e0;
+      if(!cli){err.textContent='Código não encontrado. Confira com a sua clínica.';err.style.display='block';return;}
+      const {error:e2}=await sb.from('workspace_members').insert({user_id:sbUser.id,grp:codigo,role:'equipe'});
+      if(e2) throw e2;
+      groupId=codigo; clinicaNome=cli.nome;
+    }
+    await bootApp();
+  }catch(e){err.textContent=traduzErro(e.message);err.style.display='block';}
+}
+
+/* ================= STORE (chave/valor por clínica) ================= */
+let demoMode=false;
+const mem={};
+const store={
+  async get(k){
+    if(demoMode){ try{ const v=localStorage.getItem('agendamais:demo:'+k); return v; }catch(e){ return mem[k]??null; } }
+    if(!sb||!groupId) return null;
+    if(k in mem) return mem[k];
+    try{
+      const {data,error}=await sb.from('painel').select('value').eq('grp',groupId).eq('k',k).maybeSingle();
+      if(error) throw error;
+      const v=(data&&data.value!=null)?(typeof data.value==='string'?data.value:JSON.stringify(data.value)):null;
+      mem[k]=v; return v;
+    }catch(e){ return mem[k]??null; }
+  },
+  async set(k,v){
+    mem[k]=v;
+    if(demoMode){ try{ localStorage.setItem('agendamais:demo:'+k,v); }catch(e){} return; }
+    if(!sb||!groupId) return;
+    try{ await sb.from('painel').upsert({grp:groupId,k,value:v,updated_at:new Date().toISOString()},{onConflict:'grp,k'}); }
+    catch(e){ showToast('Não foi possível salvar agora. Verifique sua internet.','err'); }
+  }
+};
+
+/* ---- modo demonstração: sem Supabase, dados de exemplo salvos só no seu navegador ---- */
+async function enterDemo(){
+  demoMode=true; groupId='demo'; clinicaNome='Clínica Demonstração (modo teste)';
+  sbUser={email:'voce@modo-demo.local'};
+  if(!localStorage.getItem('agendamais:demo:pacientes')){
+    const p1=uid(), p2=uid(), p3=uid();
+    const hoje=hojeISO();
+    await saveList('pacientes',[
+      {id:p1,nome:'Maria Fernandes',telefone:'11999990001',nascimento:'1988-04-12',obs:'Hipertensa, retorno em 3 meses.'},
+      {id:p2,nome:'João Batista',telefone:'11999990002',nascimento:'1975-11-02',obs:''},
+      {id:p3,nome:'Carla Nogueira',telefone:'11999990003',nascimento:'1994-07-30',obs:'Alérgica a dipirona.'}
+    ]);
+    await saveList('agendamentos',[
+      {id:uid(),pacienteId:p1,pacienteNome:'Maria Fernandes',telefone:'11999990001',data:hoje,hora:'09:00',tipo:'Retorno',profissional:'Dra. Ana',obs:'',status:'confirmado'},
+      {id:uid(),pacienteId:p2,pacienteNome:'João Batista',telefone:'11999990002',data:hoje,hora:'10:30',tipo:'Consulta',profissional:'Dra. Ana',obs:'',status:'agendado'},
+      {id:uid(),pacienteId:p3,pacienteNome:'Carla Nogueira',telefone:'11999990003',data:hoje,hora:'14:00',tipo:'Avaliação',profissional:'Dr. Pedro',obs:'',status:'agendado'}
+    ]);
+    await saveList('lancamentos',[
+      {id:uid(),tipo:'receita',valor:180,descricao:'Consulta - Maria Fernandes',categoria:'Consulta',data:hoje},
+      {id:uid(),tipo:'receita',valor:220,descricao:'Consulta - João Batista',categoria:'Consulta',data:hoje},
+      {id:uid(),tipo:'despesa',valor:340,descricao:'Compra de materiais descartáveis',categoria:'Material',data:hoje},
+      {id:uid(),tipo:'despesa',valor:1200,descricao:'Aluguel da sala',categoria:'Fixo',data:hoje.slice(0,8)+'05'}
+    ]);
+    await saveList('estoque',[
+      {id:uid(),nome:'Luvas descartáveis (caixa)',qtd:4,unidade:'cx',minimo:5},
+      {id:uid(),nome:'Álcool 70% (frasco)',qtd:12,unidade:'un',minimo:4},
+      {id:uid(),nome:'Seringas 5ml',qtd:30,unidade:'un',minimo:20}
+    ]);
+  }
+  await bootApp();
+  showToast('Modo demonstração — dados de exemplo, salvos só neste navegador.','ok');
+}
+async function loadList(k){ try{ const r=await store.get(k); return r?JSON.parse(r):[]; }catch(e){ return []; } }
+async function saveList(k,arr){ await store.set(k,JSON.stringify(arr)); }
+
+/* ================= UTILS ================= */
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function $(id){ return document.getElementById(id); }
+function BRL(n){ return (Number(n)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function fmtData(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('pt-BR'); }
+function fmtDataHora(iso){ const d=new Date(iso); return d.toLocaleDateString('pt-BR')+' '+d.toTimeString().slice(0,5); }
+function hojeISO(){ return new Date().toISOString().slice(0,10); }
+function showToast(msg,type){
+  const t=document.createElement('div'); t.className='toast'+(type?' '+type:''); t.textContent=msg;
+  $('toastWrap').appendChild(t); setTimeout(()=>t.remove(),3600);
+}
+function openModal(html){ $('modalBox').innerHTML=html; $('modalBg').classList.add('on'); }
+function closeModal(){ $('modalBg').classList.remove('on'); $('modalBox').innerHTML=''; }
+function soDigitos(s){ return (s||'').replace(/\D/g,''); }
+function waLink(telefone,msg){ const t=soDigitos(telefone); const t2=t.startsWith('55')?t:'55'+t; return 'https://wa.me/'+t2+'?text='+encodeURIComponent(msg); }
+function exportarCSV(nomeArquivo,colunas,linhas){
+  const esc=v=>{ v=(v===null||v===undefined)?'':String(v); if(/[",;\n]/.test(v)) v='"'+v.replace(/"/g,'""')+'"'; return v; };
+  const header=colunas.map(c=>esc(c.titulo)).join(';');
+  const corpo=linhas.map(l=>colunas.map(c=>esc(typeof c.get==='function'?c.get(l):l[c.campo])).join(';')).join('\n');
+  const csv='\uFEFF'+header+'\n'+corpo;
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=nomeArquivo; document.body.appendChild(a); a.click();
+  a.remove(); setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+</script>
+<script>
+/* ================= BOOT / ROUTER ================= */
+let currentTab='dashboard';
+const TAB_TITLES={dashboard:'Painel',agenda:'Agenda',pacientes:'Pacientes',financeiro:'Financeiro',estoque:'Estoque',procedimentos:'Procedimentos',relatorios:'Relatórios',config:'Configurações'};
+
+async function bootApp(){
+  document.getElementById('gate').style.display='none';
+  document.getElementById('app').classList.add('on');
+  $('sbUserEmail').textContent=sbUser.email;
+  if(!clinicaNome){ try{ const info=JSON.parse(await store.get('clinica:info')||'{}'); clinicaNome=info.nome||groupId; }catch(e){ clinicaNome=groupId; } }
+  $('sbClinicName').textContent=clinicaNome;
+  const cfg=await loadConfigClinica();
+  aplicarMarca(cfg);
+  try{ localStorage.setItem('agendamais:lastBrand',JSON.stringify({codigo:groupId,nome:clinicaNome,logo:cfg.logo||'',cor:cfg.corPrincipal||''})); }catch(e){}
+  goTab('dashboard');
+}
+function aplicarMarca(cfg){
+  const nome=cfg.nomeExibicao||clinicaNome||'Agenda+';
+  ['sbName'].forEach(id=>{ if($(id)) $(id).textContent=nome; });
+  if(cfg.corPrincipal){
+    document.documentElement.style.setProperty('--teal',cfg.corPrincipal);
+    document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cfg.corPrincipal} 16%, white)`);
+  }
+  ['sbMark','gateMark'].forEach(id=>{
+    const el=$(id); if(!el) return;
+    el.innerHTML = cfg.logo ? `<img src="${cfg.logo}" alt="Logo">` : 'A+';
+  });
+}
+function goTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.navItem').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
+  $('pageTitle').textContent=TAB_TITLES[tab]||'';
+  $('topbarActs').innerHTML='';
+  document.getElementById('sidebar').classList.remove('on');
+  const renderers={dashboard:renderDashboard,agenda:renderAgenda,pacientes:renderPacientes,financeiro:renderFinanceiro,estoque:renderEstoque,procedimentos:renderProcedimentos,relatorios:renderRelatorios,config:renderConfig};
+  (renderers[tab]||renderDashboard)();
+}
+
+/* ================= DASHBOARD ================= */
+async function renderDashboard(){
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  const [agendamentos,lancamentos,estoque,pacientes,contas]=await Promise.all([
+    loadList('agendamentos'),loadList('lancamentos'),loadList('estoque'),loadList('pacientes'),loadList('contas')
+  ]);
+  const hoje=hojeISO();
+  const mesAtual=hoje.slice(0,7);
+  const hojeAgend=agendamentos.filter(a=>a.data===hoje&&a.status!=='cancelado');
+  const lancMes=lancamentos.filter(l=>l.data.slice(0,7)===mesAtual);
+  const receitaMes=lancMes.filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor||0),0);
+  const despesaMes=lancMes.filter(l=>l.tipo==='despesa').reduce((s,l)=>s+Number(l.valor||0),0);
+  const lucroMes=receitaMes-despesaMes;
+  const baixoEstoque=estoque.filter(i=>Number(i.qtd)<=Number(i.minimo||0));
+  const contasAtrasadas=contas.filter(c=>c.status!=='pago'&&c.vencimento<hoje);
+
+  $('content').innerHTML=`
+    ${contasAtrasadas.length?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13.5px;color:var(--coral)"><b>${contasAtrasadas.length} conta(s) atrasada(s)</b> — total de ${BRL(contasAtrasadas.reduce((s,c)=>s+Number(c.valor||0),0))}</span>
+      <button class="btn sm" onclick="goTab('financeiro')">Ver contas</button>
+    </div>`:''}
+    <div class="grid cards4">
+      <div class="card kpi"><div class="lbl">Consultas hoje</div><div class="val">${hojeAgend.length}</div><div class="sub">${pacientes.length} pacientes cadastrados</div></div>
+      <div class="card kpi"><div class="lbl">Receita do mês</div><div class="val">${BRL(receitaMes)}</div><div class="sub">até ${fmtData(hoje)}</div></div>
+      <div class="card kpi"><div class="lbl">Despesas do mês</div><div class="val">${BRL(despesaMes)}</div><div class="sub">materiais, contas, etc.</div></div>
+      <div class="card kpi"><div class="lbl">Lucro do mês</div><div class="val" style="color:${lucroMes>=0?'var(--teal)':'var(--coral)'}">${BRL(lucroMes)}</div><div class="sub">receita − despesas</div></div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1.4fr 1fr;margin-top:16px" id="dashBottom">
+      <div class="panel">
+        <div class="panelHead"><h2>Hoje na agenda</h2><button class="btn sm" onclick="goTab('agenda')">Ver agenda</button></div>
+        ${hojeAgend.length? `<table class="tbl"><thead><tr><th>Horário</th><th>Paciente</th><th>Profissional</th><th>Status</th></tr></thead><tbody>
+          ${hojeAgend.sort((a,b)=>a.hora.localeCompare(b.hora)).map(a=>`<tr><td class="mono">${a.hora}</td><td>${a.pacienteNome}</td><td>${a.profissional||'—'}</td><td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td></tr>`).join('')}
+        </tbody></table>` : `<div class="empty"><div class="big">Nada marcado pra hoje</div>Aproveite pra revisar a agenda da semana.</div>`}
+      </div>
+      <div class="panel">
+        <div class="panelHead"><h2>Estoque baixo</h2><button class="btn sm" onclick="goTab('estoque')">Ver estoque</button></div>
+        ${baixoEstoque.length? `<table class="tbl"><thead><tr><th>Item</th><th>Qtd.</th></tr></thead><tbody>
+          ${baixoEstoque.map(i=>`<tr><td>${i.nome}</td><td class="stockLow">${i.qtd} ${i.unidade||''}</td></tr>`).join('')}
+        </tbody></table>` : `<div class="empty"><div class="big">Tudo certo</div>Nenhum item abaixo do mínimo.</div>`}
+      </div>
+    </div>
+  `;
+}
+function statusLabel(s){
+  return {agendado:'Agendado',confirmado:'Confirmado',atendido:'Atendido',faltou:'Faltou',cancelado:'Cancelado'}[s]||s;
+}
+</script>
+<script>
+/* ================= AGENDA ================= */
+let agendaData=[]; let agendaPacientes=[]; let agendaSelDia=hojeISO(); let agendaMesRef=new Date(); let agendaProcedimentos=[]; let agendaEstoque=[];
+function custoProcedimentoAgenda(p){
+  return (p.itens||[]).reduce((s,it)=>{ const e=agendaEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+}
+function precoSugeridoAgenda(p){
+  const custo=custoProcedimentoAgenda(p); const m=Number(p.margem||0);
+  return (m>0&&m<100) ? custo/(1-m/100) : custo;
+}
+const HORA_INI=7, HORA_FIM=20;
+
+async function renderAgenda(){
+  $('topbarActs').innerHTML=`<button class="btn sm" onclick="exportarAgendaCSV()">Exportar CSV</button> <button class="btn primary" onclick="abrirModalAgendamento()">+ Novo agendamento</button>`;
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  [agendaData,agendaPacientes,agendaProcedimentos,agendaEstoque]=await Promise.all([loadList('agendamentos'),loadList('pacientes'),loadList('procedimentos'),loadList('estoque')]);
+  pintarAgenda();
+}
+function exportarAgendaCSV(){
+  exportarCSV('agenda.csv',[
+    {titulo:'Data',get:a=>fmtData(a.data)},{titulo:'Hora',campo:'hora'},{titulo:'Paciente',campo:'pacienteNome'},
+    {titulo:'Tipo',campo:'tipo'},{titulo:'Profissional',campo:'profissional'},{titulo:'Status',get:a=>statusLabel(a.status)}
+  ],[...agendaData].sort((a,b)=>a.data.localeCompare(b.data)||a.hora.localeCompare(b.hora)));
+}
+function pintarAgenda(){
+  $('content').innerHTML=`<div class="agendaWrap"><div class="agendaCal">${miniCalHTML()}</div><div class="dayTimeline" id="dayTimeline">${dayTimelineHTML()}</div></div>`;
+}
+function miniCalHTML(){
+  const ref=agendaMesRef, y=ref.getFullYear(), m=ref.getMonth();
+  const primeiro=new Date(y,m,1), ultimoDia=new Date(y,m+1,0).getDate();
+  const offset=primeiro.getDay();
+  const hoje=hojeISO();
+  let dias='';
+  for(let i=0;i<offset;i++) dias+=`<div></div>`;
+  for(let d=1;d<=ultimoDia;d++){
+    const iso=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    let cls='mcDay'; if(iso===hoje) cls+=' today'; if(iso===agendaSelDia) cls+=' sel';
+    dias+=`<div class="${cls}" onclick="agendaSelDia='${iso}';pintarAgenda()">${d}</div>`;
+  }
+  return `<div class="miniCal">
+    <div class="mcHead"><button class="mcNav" onclick="mudaMes(-1)">‹</button><span>${ref.toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</span><button class="mcNav" onclick="mudaMes(1)">›</button></div>
+    <div class="mcGrid">${['D','S','T','Q','Q','S','S'].map(x=>`<div class="mcDow">${x}</div>`).join('')}${dias}</div>
+    <button class="btn sm" style="width:100%;margin-top:12px" onclick="agendaSelDia=hojeISO();agendaMesRef=new Date();pintarAgenda()">Hoje</button>
+  </div>`;
+}
+function mudaMes(delta){ agendaMesRef=new Date(agendaMesRef.getFullYear(),agendaMesRef.getMonth()+delta,1); pintarAgenda(); }
+function dayTimelineHTML(){
+  const doDia=agendaData.filter(a=>a.data===agendaSelDia).sort((a,b)=>a.hora.localeCompare(b.hora));
+  let rows='';
+  for(let h=HORA_INI;h<HORA_FIM;h++){
+    const hstr=String(h).padStart(2,'0')+':00';
+    const nesteHora=doDia.filter(a=>a.hora.slice(0,2)===String(h).padStart(2,'0'));
+    rows+=`<div class="dtRow"><div class="dtHour">${hstr}</div><div class="dtSlot">
+      ${nesteHora.map(a=>apptCardHTML(a)).join('')}
+    </div></div>`;
+  }
+  const titulo=new Date(agendaSelDia+'T00:00:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
+  return `<div style="padding:12px 16px 4px;font-weight:600;font-family:'Newsreader',serif;font-size:15px;text-transform:capitalize">${titulo}</div>${rows}`;
+}
+function apptCardHTML(a){
+  return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${a.id}')">
+    <div><div class="who">${a.pacienteNome}</div><div class="what">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''} · ${a.hora}</div></div>
+    <div class="apptActs">
+      <button class="iconBtn" title="Lembrete WhatsApp" onclick="event.stopPropagation();lembreteWhats('${a.id}')">💬</button>
+    </div>
+  </div>`;
+}
+function abrirModalAgendamento(id){
+  const a=id?agendaData.find(x=>x.id===id):null;
+  const pacOpts=agendaPacientes.map(p=>`<option value="${p.id}" ${a&&a.pacienteId===p.id?'selected':''}>${p.nome}</option>`).join('');
+  openModal(`
+    <div class="modalHead"><h3>${a?'Editar agendamento':'Novo agendamento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Paciente</label><select id="fPaciente">${pacOpts||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="formRow">
+        <div class="field"><label>Data</label><input type="date" id="fData" value="${a?a.data:agendaSelDia}"></div>
+        <div class="field"><label>Horário</label><input type="time" id="fHora" value="${a?a.hora:'09:00'}"></div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Tipo</label><input id="fTipo" placeholder="Consulta, retorno, avaliação…" value="${a?a.tipo||'':''}"></div>
+        <div class="field"><label>Profissional</label><input id="fProf" placeholder="Dr(a)." value="${a?a.profissional||'':''}"></div>
+      </div>
+      <div class="field"><label>Procedimento (opcional — baixa o estoque e lança o financeiro sozinho ao marcar "Atendido")</label>
+        <select id="fProcedimento">
+          <option value="">Nenhum / lançar manualmente</option>
+          ${agendaProcedimentos.map(p=>`<option value="${p.id}" ${a&&a.procedimentoId===p.id?'selected':''}>${p.nome} — ${BRL(p.precoManual||precoSugeridoAgenda(p))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Observações</label><textarea id="fObs" rows="2">${a?a.obs||'':''}</textarea></div>
+      ${a?`<div class="field"><label>Status</label><select id="fStatus">
+        ${['agendado','confirmado','atendido','faltou','cancelado'].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
+      </select></div>`:''}
+    </div>
+    <div class="modalFoot">
+      ${a?`<button class="btn danger" onclick="excluirAgendamento('${a.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarAgendamento(${a?`'${a.id}'`:'null'})">Salvar</button>
+    </div>
+  `);
+}
+async function salvarAgendamento(id){
+  const pacienteId=$('fPaciente').value;
+  if(!pacienteId){showToast('Selecione um paciente.','err');return;}
+  const paciente=agendaPacientes.find(p=>p.id===pacienteId);
+  const anterior=id?agendaData.find(a=>a.id===id):null;
+  const obj={
+    id:id||uid(), pacienteId, pacienteNome:paciente?paciente.nome:'', telefone:paciente?paciente.telefone:'',
+    data:$('fData').value, hora:$('fHora').value, tipo:$('fTipo').value.trim(), profissional:$('fProf').value.trim(),
+    procedimentoId:$('fProcedimento').value||'', obs:$('fObs').value.trim(), status: id ? $('fStatus').value : 'agendado',
+    baixaFeita: anterior?anterior.baixaFeita:false
+  };
+  if(!obj.data||!obj.hora){showToast('Preencha data e horário.','err');return;}
+  const virouAtendido = obj.status==='atendido' && (!anterior||anterior.status!=='atendido');
+  if(virouAtendido && obj.procedimentoId && !obj.baixaFeita){
+    await processarProcedimentoNaConsulta(obj);
+    obj.baixaFeita=true;
+  }
+  const idx=agendaData.findIndex(a=>a.id===obj.id);
+  if(idx>=0) agendaData[idx]=obj; else agendaData.push(obj);
+  await saveList('agendamentos',agendaData);
+  closeModal(); showToast(id?'Agendamento atualizado.':'Agendamento criado.','ok');
+  agendaSelDia=obj.data; pintarAgenda();
+}
+async function processarProcedimentoNaConsulta(a){
+  const proc=agendaProcedimentos.find(p=>p.id===a.procedimentoId);
+  if(!proc) return;
+  let precisaSalvarEstoque=false;
+  (proc.itens||[]).forEach(it=>{
+    const e=agendaEstoque.find(x=>x.id===it.estoqueId);
+    if(e){ e.qtd=Math.max(0,Number(e.qtd||0)-Number(it.qtd||0)); precisaSalvarEstoque=true; }
+  });
+  if(precisaSalvarEstoque) await saveList('estoque',agendaEstoque);
+  const custo=custoProcedimentoAgenda(proc);
+  const preco=proc.precoManual||precoSugeridoAgenda(proc);
+  const lanc=await loadList('lancamentos');
+  lanc.push({id:uid(),tipo:'receita',valor:preco,descricao:proc.nome+' — '+a.pacienteNome,categoria:'Procedimento',data:a.data,natureza:'operacional',origem:'procedimento',agendamentoId:a.id});
+  if(custo>0) lanc.push({id:uid(),tipo:'despesa',valor:custo,descricao:'Insumos: '+proc.nome+' — '+a.pacienteNome,categoria:'Insumos (CMV)',data:a.data,natureza:'cmv',origem:'procedimento',agendamentoId:a.id});
+  await saveList('lancamentos',lanc);
+  showToast('Estoque baixado e financeiro lançado automaticamente.','ok');
+}
+async function excluirAgendamento(id){
+  if(!confirm('Excluir este agendamento?')) return;
+  agendaData=agendaData.filter(a=>a.id!==id);
+  await saveList('agendamentos',agendaData);
+  closeModal(); showToast('Agendamento excluído.','ok'); pintarAgenda();
+}
+async function lembreteWhats(id){
+  const a=agendaData.find(x=>x.id===id);
+  if(!a) return;
+  if(!a.telefone){showToast('Este paciente não tem telefone cadastrado.','err');return;}
+  const cfg=await loadConfigClinica();
+  const tpl=cfg.templateLembrete||'Olá {nome}! Passando para lembrar da sua consulta em {data} às {hora} na {clinica}. Para confirmar ou remarcar, é só responder por aqui.';
+  const msg=tpl.replace('{nome}',a.pacienteNome).replace('{data}',fmtData(a.data)).replace('{hora}',a.hora).replace('{clinica}',clinicaNome);
+  if(cfg.webhookAtivo && cfg.webhookWhats){
+    try{
+      await fetch(cfg.webhookWhats,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({telefone:a.telefone,mensagem:msg,paciente:a.pacienteNome,data:a.data,hora:a.hora,clinica:clinicaNome})});
+      showToast('Lembrete enviado pelo fluxo automático.','ok'); return;
+    }catch(e){ showToast('Webhook falhou, abrindo envio manual…','err'); }
+  }
+  window.open(waLink(a.telefone,msg),'_blank');
+}
+</script>
+<script>
+/* ================= PACIENTES ================= */
+let pacientesData=[]; let pacientesBusca='';
+async function renderPacientes(){
+  $('topbarActs').innerHTML=`<button class="btn sm" onclick="exportarPacientesCSV()">Exportar CSV</button> <button class="btn primary" onclick="abrirModalPaciente()">+ Novo paciente</button>`;
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  pacientesData=await loadList('pacientes');
+  pintarPacientes();
+}
+function exportarPacientesCSV(){
+  exportarCSV('pacientes.csv',[
+    {titulo:'Nome',campo:'nome'},{titulo:'Telefone',campo:'telefone'},
+    {titulo:'Nascimento',get:p=>p.nascimento?fmtData(p.nascimento):''},{titulo:'Observações',campo:'obs'}
+  ],pacientesData);
+}
+function pintarPacientes(){
+  const q=pacientesBusca.toLowerCase();
+  const lista=pacientesData.filter(p=>!q||p.nome.toLowerCase().includes(q)||soDigitos(p.telefone).includes(soDigitos(q)));
+  $('content').innerHTML=`
+    <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${pacientesBusca}"></div>
+    <div class="panel">
+      ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th></th></tr></thead><tbody>
+        ${lista.map(p=>`<tr style="cursor:pointer" onclick="abrirModalPaciente('${p.id}')"><td>${p.nome}</td><td class="mono">${p.telefone||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
+          <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${p.telefone||''}',''),'_blank')">💬</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhum paciente ainda</div>Cadastre o primeiro paciente pra começar a usar a agenda.</div>`}
+    </div>`;
+}
+function abrirModalPaciente(id){
+  const p=id?pacientesData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${p?'Editar paciente':'Novo paciente'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Nome completo</label><input id="pNome" value="${p?p.nome:''}"></div>
+      <div class="formRow">
+        <div class="field"><label>Telefone (WhatsApp)</label><input id="pTel" placeholder="(11) 99999-9999" value="${p?p.telefone||'':''}"></div>
+        <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?p.nascimento||'':''}"></div>
+      </div>
+      <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?p.obs||'':''}</textarea></div>
+    </div>
+    <div class="modalFoot">
+      ${p?`<button class="btn" onclick="abrirProntuario('${p.id}')">Ver prontuário</button>`:''}
+      ${p?`<button class="btn danger" onclick="excluirPaciente('${p.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarPaciente(${p?`'${p.id}'`:'null'})">Salvar</button>
+    </div>
+  `);
+}
+
+/* ---- Prontuário: evolução por consulta + anexos ---- */
+let prontuarioPacienteId=null; let evolucoesData=[];
+async function abrirProntuario(pacienteId){
+  prontuarioPacienteId=pacienteId;
+  const p=pacientesData.find(x=>x.id===pacienteId);
+  evolucoesData=await loadList('evolucoes');
+  pintarProntuario(p);
+}
+function pintarProntuario(p){
+  const minhas=evolucoesData.filter(e=>e.pacienteId===prontuarioPacienteId).sort((a,b)=>b.data.localeCompare(a.data));
+  openModal(`
+    <div class="modalHead"><h3>Prontuário — ${p.nome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="formRow">
+        <div class="field"><label>Data</label><input type="date" id="evData" value="${hojeISO()}"></div>
+        <div class="field"><label>Anexo (opcional)</label><input type="file" id="evAnexo" accept="image/*,.pdf"></div>
+      </div>
+      <div class="field"><label>Evolução / anotação da consulta</label><textarea id="evTexto" rows="3" placeholder="Queixa, exame, conduta, prescrição…"></textarea></div>
+      <button class="btn primary sm" onclick="salvarEvolucao()">Adicionar ao prontuário</button>
+      <div style="margin-top:18px;border-top:1px solid var(--line-soft);padding-top:14px">
+        ${minhas.length? minhas.map(e=>`
+          <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line-soft)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <b style="font-family:'Newsreader',serif">${fmtData(e.data)}</b>
+              <button class="iconBtn" onclick="excluirEvolucao('${e.id}')">🗑</button>
+            </div>
+            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${e.texto||''}</div>
+            ${e.anexoNome?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${e.anexoData}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${e.anexoData}" download="${e.anexoNome}" class="tag">📎 ${e.anexoNome}</a>`}</div>`:''}
+          </div>`).join('') : `<div class="empty">Nenhuma evolução registrada ainda.</div>`}
+      </div>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="closeModal()">Fechar</button></div>
+  `);
+}
+async function salvarEvolucao(){
+  const texto=$('evTexto').value.trim(), data=$('evData').value;
+  const file=$('evAnexo').files[0];
+  if(!texto&&!file){showToast('Escreva algo ou anexe um arquivo.','err');return;}
+  const obj={id:uid(),pacienteId:prontuarioPacienteId,data:data||hojeISO(),texto};
+  if(file){
+    if(file.size>1.5*1024*1024){showToast('Anexo muito grande (máx. 1,5MB).','err');return;}
+    try{ obj.anexoNome=file.name; obj.anexoData=await lerImagemBase64(file); }catch(e){showToast('Não consegui ler o anexo.','err');return;}
+  }
+  evolucoesData.push(obj);
+  await saveList('evolucoes',evolucoesData);
+  showToast('Evolução adicionada.','ok');
+  pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId));
+}
+async function excluirEvolucao(id){
+  if(!confirm('Excluir esta anotação do prontuário?')) return;
+  evolucoesData=evolucoesData.filter(e=>e.id!==id);
+  await saveList('evolucoes',evolucoesData);
+  pintarProntuario(pacientesData.find(x=>x.id===prontuarioPacienteId));
+}
+async function salvarPaciente(id){
+  const nome=$('pNome').value.trim();
+  if(!nome){showToast('Digite o nome do paciente.','err');return;}
+  const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,obs:$('pObs').value.trim()};
+  const idx=pacientesData.findIndex(p=>p.id===obj.id);
+  if(idx>=0) pacientesData[idx]=obj; else pacientesData.push(obj);
+  await saveList('pacientes',pacientesData);
+  closeModal(); showToast(id?'Paciente atualizado.':'Paciente cadastrado.','ok'); pintarPacientes();
+}
+async function excluirPaciente(id){
+  if(!confirm('Excluir este paciente? Os agendamentos já criados não serão apagados.')) return;
+  pacientesData=pacientesData.filter(p=>p.id!==id);
+  await saveList('pacientes',pacientesData);
+  closeModal(); showToast('Paciente excluído.','ok'); pintarPacientes();
+}
+</script>
+<script>
+/* ================= FINANCEIRO ================= */
+let lancData=[]; let contasData=[]; let financeiroMes=hojeISO().slice(0,7); let financeiroSubTab='lancamentos';
+async function renderFinanceiro(){
+  $('topbarActs').innerHTML='';
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  [lancData,contasData]=await Promise.all([loadList('lancamentos'),loadList('contas')]);
+  pintarFinanceiro();
+}
+function financeiroTabsHTML(){
+  return `<div class="gateTabs" style="max-width:420px;margin-bottom:16px">
+    <button class="gateTab ${financeiroSubTab==='lancamentos'?'on':''}" onclick="financeiroSubTab='lancamentos';pintarFinanceiro()">Lançamentos</button>
+    <button class="gateTab ${financeiroSubTab==='contas'?'on':''}" onclick="financeiroSubTab='contas';pintarFinanceiro()">A pagar/receber</button>
+    <button class="gateTab ${financeiroSubTab==='dre'?'on':''}" onclick="financeiroSubTab='dre';pintarFinanceiro()">DRE</button>
+  </div>`;
+}
+function pintarFinanceiro(){
+  if(financeiroSubTab==='contas') return pintarContas();
+  if(financeiroSubTab==='dre') return pintarDRE();
+  const doMes=lancData.filter(l=>l.data.slice(0,7)===financeiroMes).sort((a,b)=>b.data.localeCompare(a.data));
+  const receita=doMes.filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor||0),0);
+  const despesa=doMes.filter(l=>l.tipo==='despesa').reduce((s,l)=>s+Number(l.valor||0),0);
+  $('content').innerHTML=`
+    ${financeiroTabsHTML()}
+    <div class="toolbar">
+      <input type="month" class="gateInp" style="width:auto" value="${financeiroMes}" onchange="financeiroMes=this.value;pintarFinanceiro()">
+      <span class="tag">Receita: <b class="mono">${BRL(receita)}</b></span>
+      <span class="tag">Despesa: <b class="mono">${BRL(despesa)}</b></span>
+      <span class="tag" style="background:var(--teal-soft);color:var(--teal)">Lucro: <b class="mono">${BRL(receita-despesa)}</b></span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="exportarFinanceiroCSV()">Exportar CSV</button>
+      <button class="btn primary sm" onclick="abrirModalLancamento()">+ Lançamento</button>
+    </div>
+    <div class="panel">
+      ${doMes.length?`<table class="tbl"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Natureza</th><th>Tipo</th><th>Valor</th><th></th></tr></thead><tbody>
+        ${doMes.map(l=>`<tr><td>${fmtData(l.data)}</td><td>${l.descricao}</td><td><span class="tag">${l.categoria||'—'}</span></td><td><span class="tag">${naturezaLabel(l.natureza)}</span></td>
+          <td><span class="badge ${l.tipo==='receita'?'confirmado':'cancelado'}">${l.tipo==='receita'?'Receita':'Despesa'}</span></td>
+          <td class="mono">${BRL(l.valor)}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalLancamento('${l.id}')">✎</button></td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhum lançamento neste mês</div>Registre o que a clínica recebeu e gastou.</div>`}
+    </div>`;
+}
+function naturezaLabel(n){ return {fixa:'Fixa',variavel:'Variável',cmv:'CMV (insumo)'}[n]||'Variável'; }
+function exportarFinanceiroCSV(){
+  const doMes=lancData.filter(l=>l.data.slice(0,7)===financeiroMes);
+  exportarCSV('financeiro_'+financeiroMes+'.csv',[
+    {titulo:'Data',get:l=>fmtData(l.data)},{titulo:'Descrição',campo:'descricao'},{titulo:'Categoria',campo:'categoria'},
+    {titulo:'Natureza',get:l=>naturezaLabel(l.natureza)},
+    {titulo:'Tipo',get:l=>l.tipo==='receita'?'Receita':'Despesa'},{titulo:'Valor',get:l=>Number(l.valor||0).toFixed(2).replace('.',',')}
+  ],doMes);
+}
+function abrirModalLancamento(id){
+  const l=id?lancData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${l?'Editar lançamento':'Novo lançamento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="formRow">
+        <div class="field"><label>Tipo</label><select id="lTipo"><option value="receita" ${l&&l.tipo==='receita'?'selected':''}>Receita (recebido)</option><option value="despesa" ${l&&l.tipo==='despesa'?'selected':''}>Despesa (gasto)</option></select></div>
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="lValor" value="${l?l.valor:''}"></div>
+      </div>
+      <div class="field"><label>Descrição</label><input id="lDesc" placeholder="Ex: Consulta - João Silva" value="${l?l.descricao:''}"></div>
+      <div class="formRow">
+        <div class="field"><label>Categoria</label><input id="lCat" placeholder="Consulta, aluguel, material…" value="${l?l.categoria||'':''}"></div>
+        <div class="field"><label>Data</label><input type="date" id="lData" value="${l?l.data:hojeISO()}"></div>
+      </div>
+      <div class="field"><label>Natureza (pro DRE)</label><select id="lNatureza">
+        <option value="fixa" ${l&&l.natureza==='fixa'?'selected':''}>Despesa fixa (aluguel, salário fixo…)</option>
+        <option value="variavel" ${!l||l.natureza==='variavel'?'selected':''}>Variável / receita normal</option>
+        <option value="cmv" ${l&&l.natureza==='cmv'?'selected':''}>CMV — custo direto de insumo</option>
+      </select></div>
+    </div>
+    <div class="modalFoot">
+      ${l?`<button class="btn danger" onclick="excluirLancamento('${l.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarLancamento(${l?`'${l.id}'`:'null'})">Salvar</button>
+    </div>`);
+}
+async function salvarLancamento(id){
+  const valor=parseFloat($('lValor').value), desc=$('lDesc').value.trim();
+  if(!valor||!desc){showToast('Preencha descrição e valor.','err');return;}
+  const obj={id:id||uid(),tipo:$('lTipo').value,valor,descricao:desc,categoria:$('lCat').value.trim(),data:$('lData').value,natureza:$('lNatureza').value};
+  const idx=lancData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) lancData[idx]=obj; else lancData.push(obj);
+  await saveList('lancamentos',lancData);
+  closeModal(); showToast('Lançamento salvo.','ok'); financeiroMes=obj.data.slice(0,7); pintarFinanceiro();
+}
+async function excluirLancamento(id){
+  if(!confirm('Excluir este lançamento?')) return;
+  lancData=lancData.filter(x=>x.id!==id);
+  await saveList('lancamentos',lancData);
+  closeModal(); showToast('Lançamento excluído.','ok'); pintarFinanceiro();
+}
+
+/* ---- Contas a pagar / receber (fluxo de caixa) ---- */
+function pintarContas(){
+  const hoje=hojeISO();
+  const pendentes=contasData.filter(c=>c.status!=='pago').sort((a,b)=>a.vencimento.localeCompare(b.vencimento));
+  const pagas=contasData.filter(c=>c.status==='pago').sort((a,b)=>b.vencimento.localeCompare(a.vencimento)).slice(0,15);
+  const totalPagar=pendentes.filter(c=>c.tipo==='pagar').reduce((s,c)=>s+Number(c.valor||0),0);
+  const totalReceber=pendentes.filter(c=>c.tipo==='receber').reduce((s,c)=>s+Number(c.valor||0),0);
+  $('content').innerHTML=`
+    ${financeiroTabsHTML()}
+    <div class="toolbar">
+      <span class="tag">A receber (pendente): <b class="mono">${BRL(totalReceber)}</b></span>
+      <span class="tag">A pagar (pendente): <b class="mono">${BRL(totalPagar)}</b></span>
+      <span class="tag" style="background:var(--teal-soft);color:var(--teal)">Saldo projetado: <b class="mono">${BRL(totalReceber-totalPagar)}</b></span>
+      <span style="flex:1"></span>
+      <button class="btn primary sm" onclick="abrirModalConta()">+ Conta</button>
+    </div>
+    <div class="panel">
+      <div class="panelHead"><h2>Pendentes</h2></div>
+      ${pendentes.length?`<table class="tbl"><thead><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th></th></tr></thead><tbody>
+        ${pendentes.map(c=>{
+          const atrasada=c.vencimento<hoje;
+          return `<tr><td class="${atrasada?'stockLow':''}">${fmtData(c.vencimento)}${atrasada?' · atrasada':''}</td><td>${c.descricao}</td>
+          <td><span class="badge ${c.tipo==='receber'?'confirmado':'faltou'}">${c.tipo==='receber'?'A receber':'A pagar'}</span></td>
+          <td class="mono">${BRL(c.valor)}</td>
+          <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
+            <button class="btn sm" onclick="marcarContaPaga('${c.id}')">${c.tipo==='receber'?'Marcar recebida':'Marcar paga'}</button>
+            <button class="iconBtn" onclick="abrirModalConta('${c.id}')">✎</button>
+          </td></tr>`;
+        }).join('')}
+      </tbody></table>`:`<div class="empty"><div class="big">Nenhuma conta pendente</div>Cadastre contas a pagar ou a receber com data de vencimento.</div>`}
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panelHead"><h2>Últimas quitadas</h2></div>
+      ${pagas.length?`<table class="tbl"><thead><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Valor</th></tr></thead><tbody>
+        ${pagas.map(c=>`<tr><td>${fmtData(c.vencimento)}</td><td>${c.descricao}</td><td>${c.tipo==='receber'?'Recebida':'Paga'}</td><td class="mono">${BRL(c.valor)}</td></tr>`).join('')}
+      </tbody></table>`:`<div class="empty">Nenhuma conta quitada ainda.</div>`}
+    </div>`;
+}
+function abrirModalConta(id){
+  const c=id?contasData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${c?'Editar conta':'Nova conta'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Tipo</label><select id="cTipo"><option value="pagar" ${c&&c.tipo==='pagar'?'selected':''}>A pagar</option><option value="receber" ${c&&c.tipo==='receber'?'selected':''}>A receber</option></select></div>
+      <div class="field"><label>Descrição</label><input id="cDesc" placeholder="Ex: Aluguel de agosto" value="${c?c.descricao:''}"></div>
+      <div class="formRow">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="cValor" value="${c?c.valor:''}"></div>
+        <div class="field"><label>Vencimento</label><input type="date" id="cVenc" value="${c?c.vencimento:hojeISO()}"></div>
+      </div>
+    </div>
+    <div class="modalFoot">
+      ${c?`<button class="btn danger" onclick="excluirConta('${c.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarConta(${c?`'${c.id}'`:'null'})">Salvar</button>
+    </div>`);
+}
+async function salvarConta(id){
+  const desc=$('cDesc').value.trim(), valor=parseFloat($('cValor').value), venc=$('cVenc').value;
+  if(!desc||!valor||!venc){showToast('Preencha descrição, valor e vencimento.','err');return;}
+  const anterior=id?contasData.find(x=>x.id===id):null;
+  const obj={id:id||uid(),tipo:$('cTipo').value,descricao:desc,valor,vencimento:venc,status:anterior?anterior.status:'pendente'};
+  const idx=contasData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) contasData[idx]=obj; else contasData.push(obj);
+  await saveList('contas',contasData);
+  closeModal(); showToast('Conta salva.','ok'); pintarFinanceiro();
+}
+async function excluirConta(id){
+  if(!confirm('Excluir esta conta?')) return;
+  contasData=contasData.filter(x=>x.id!==id);
+  await saveList('contas',contasData);
+  closeModal(); showToast('Conta excluída.','ok'); pintarFinanceiro();
+}
+async function marcarContaPaga(id){
+  const c=contasData.find(x=>x.id===id); if(!c) return;
+  c.status='pago'; c.pagoEm=hojeISO();
+  await saveList('contas',contasData);
+  lancData.push({id:uid(),tipo:c.tipo==='receber'?'receita':'despesa',valor:c.valor,descricao:c.descricao,categoria:'Conta '+(c.tipo==='receber'?'a receber':'a pagar'),data:c.pagoEm,natureza:'variavel',origem:'conta',contaId:c.id});
+  await saveList('lancamentos',lancData);
+  showToast(c.tipo==='receber'?'Recebimento confirmado.':'Pagamento confirmado.','ok');
+  pintarFinanceiro();
+}
+
+/* ---- DRE completo ---- */
+function pintarDRE(){
+  const meses=[]; const now=new Date();
+  for(let i=5;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); meses.push(d.toISOString().slice(0,7)); }
+  const linhas=meses.map(m=>{
+    const doMes=lancData.filter(l=>l.data.slice(0,7)===m);
+    const receita=doMes.filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor||0),0);
+    const cmv=doMes.filter(l=>l.tipo==='despesa'&&l.natureza==='cmv').reduce((s,l)=>s+Number(l.valor||0),0);
+    const fixa=doMes.filter(l=>l.tipo==='despesa'&&l.natureza==='fixa').reduce((s,l)=>s+Number(l.valor||0),0);
+    const variavel=doMes.filter(l=>l.tipo==='despesa'&&(!l.natureza||l.natureza==='variavel')).reduce((s,l)=>s+Number(l.valor||0),0);
+    const margemBruta=receita-cmv; const despOp=fixa+variavel; const resultado=margemBruta-despOp;
+    return {m,receita,cmv,fixa,variavel,despOp,margemBruta,resultado};
+  });
+  const atual=linhas[linhas.length-1];
+  $('content').innerHTML=`
+    ${financeiroTabsHTML()}
+    <div class="panel" style="max-width:520px;margin-bottom:16px">
+      <div class="panelHead"><h2>DRE — ${new Date(atual.m+'-01').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h2>
+        <button class="btn sm" onclick="exportarDRECSV()">Exportar CSV</button></div>
+      <div class="modalBody" style="font-size:13.5px">
+        <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Receita bruta</span><b class="mono">${BRL(atual.receita)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--coral)"><span>(−) CMV (insumos)</span><b class="mono">${BRL(atual.cmv)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line-soft);font-weight:600"><span>Margem bruta</span><b class="mono">${BRL(atual.margemBruta)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--coral)"><span>(−) Despesas fixas</span><b class="mono">${BRL(atual.fixa)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--coral)"><span>(−) Despesas variáveis</span><b class="mono">${BRL(atual.variavel)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0 0;border-top:1px solid var(--line);font-weight:700;font-size:15px"><span>Resultado operacional</span><b class="mono" style="color:${atual.resultado>=0?'var(--teal)':'var(--coral)'}">${BRL(atual.resultado)}</b></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panelHead"><h2>Comparativo — últimos 6 meses</h2></div>
+      <table class="tbl"><thead><tr><th>Mês</th><th>Receita</th><th>CMV</th><th>Margem bruta</th><th>Desp. operacional</th><th>Resultado</th></tr></thead><tbody>
+        ${linhas.map(l=>`<tr><td style="text-transform:capitalize">${new Date(l.m+'-01').toLocaleDateString('pt-BR',{month:'short',year:'2-digit'})}</td>
+          <td class="mono">${BRL(l.receita)}</td><td class="mono">${BRL(l.cmv)}</td><td class="mono">${BRL(l.margemBruta)}</td><td class="mono">${BRL(l.despOp)}</td>
+          <td class="mono" style="font-weight:600;color:${l.resultado>=0?'var(--teal)':'var(--coral)'}">${BRL(l.resultado)}</td></tr>`).join('')}
+      </tbody></table>
+    </div>`;
+  window._dreLinhas=linhas;
+}
+function exportarDRECSV(){
+  const linhas=window._dreLinhas||[];
+  exportarCSV('dre_6meses.csv',[
+    {titulo:'Mês',get:l=>l.m},{titulo:'Receita bruta',get:l=>l.receita.toFixed(2).replace('.',',')},
+    {titulo:'CMV',get:l=>l.cmv.toFixed(2).replace('.',',')},{titulo:'Margem bruta',get:l=>l.margemBruta.toFixed(2).replace('.',',')},
+    {titulo:'Despesas fixas',get:l=>l.fixa.toFixed(2).replace('.',',')},{titulo:'Despesas variáveis',get:l=>l.variavel.toFixed(2).replace('.',',')},
+    {titulo:'Resultado operacional',get:l=>l.resultado.toFixed(2).replace('.',',')}
+  ],linhas);
+}
+
+/* ================= ESTOQUE ================= */
+let estoqueData=[];
+async function renderEstoque(){
+  $('topbarActs').innerHTML=`<button class="btn sm" onclick="exportarEstoqueCSV()">Exportar CSV</button> <button class="btn primary" onclick="abrirModalEstoque()">+ Item</button>`;
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  estoqueData=await loadList('estoque');
+  pintarEstoque();
+}
+function exportarEstoqueCSV(){
+  exportarCSV('estoque.csv',[
+    {titulo:'Item',campo:'nome'},{titulo:'Quantidade',campo:'qtd'},{titulo:'Unidade',campo:'unidade'},{titulo:'Mínimo',campo:'minimo'}
+  ],estoqueData);
+}
+function pintarEstoque(){
+  $('content').innerHTML=`<div class="panel">
+    ${estoqueData.length?`<table class="tbl"><thead><tr><th>Item</th><th>Quantidade</th><th>Mínimo</th><th>Custo unit.</th><th></th></tr></thead><tbody>
+      ${estoqueData.map(i=>`<tr><td>${i.nome}</td><td class="${Number(i.qtd)<=Number(i.minimo||0)?'stockLow':''}">${i.qtd} ${i.unidade||''}</td><td>${i.minimo||0} ${i.unidade||''}</td><td class="mono">${BRL(i.custoUnitario||0)}</td>
+        <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
+          <button class="iconBtn" title="Entrada" onclick="ajustarEstoque('${i.id}',1)">＋</button>
+          <button class="iconBtn" title="Saída" onclick="ajustarEstoque('${i.id}',-1)">－</button>
+          <button class="iconBtn" onclick="abrirModalEstoque('${i.id}')">✎</button>
+        </td></tr>`).join('')}
+    </tbody></table>`:`<div class="empty"><div class="big">Nenhum item cadastrado</div>Cadastre os materiais que o consultório usa.</div>`}
+  </div>`;
+}
+async function ajustarEstoque(id,delta){
+  const i=estoqueData.find(x=>x.id===id); if(!i) return;
+  const qtd=prompt('Quantidade a '+(delta>0?'somar (entrada)':'subtrair (saída)')+':','1');
+  const n=parseFloat(qtd); if(!n||n<=0) return;
+  i.qtd=Math.max(0,Number(i.qtd||0)+delta*n);
+  await saveList('estoque',estoqueData);
+  showToast('Estoque atualizado.','ok'); pintarEstoque();
+}
+function abrirModalEstoque(id){
+  const i=id?estoqueData.find(x=>x.id===id):null;
+  openModal(`
+    <div class="modalHead"><h3>${i?'Editar item':'Novo item de estoque'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Nome do item</label><input id="eNome" placeholder="Ex: Luvas descartáveis (caixa)" value="${i?i.nome:''}"></div>
+      <div class="formRow">
+        <div class="field"><label>Quantidade atual</label><input type="number" step="0.01" id="eQtd" value="${i?i.qtd:0}"></div>
+        <div class="field"><label>Unidade</label><input id="eUn" placeholder="un, caixa, ml…" value="${i?i.unidade||'':''}"></div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Estoque mínimo (alerta)</label><input type="number" step="0.01" id="eMin" value="${i?i.minimo||0:0}"></div>
+        <div class="field"><label>Custo unitário (R$)</label><input type="number" step="0.01" id="eCusto" value="${i?i.custoUnitario||0:0}"></div>
+      </div>
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px">O custo unitário é usado pra calcular automaticamente o custo dos procedimentos.</p>
+    </div>
+    <div class="modalFoot">
+      ${i?`<button class="btn danger" onclick="excluirEstoque('${i.id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarEstoque(${i?`'${i.id}'`:'null'})">Salvar</button>
+    </div>`);
+}
+async function salvarEstoque(id){
+  const nome=$('eNome').value.trim();
+  if(!nome){showToast('Digite o nome do item.','err');return;}
+  const obj={id:id||uid(),nome,qtd:parseFloat($('eQtd').value)||0,unidade:$('eUn').value.trim(),minimo:parseFloat($('eMin').value)||0,custoUnitario:parseFloat($('eCusto').value)||0};
+  const idx=estoqueData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) estoqueData[idx]=obj; else estoqueData.push(obj);
+  await saveList('estoque',estoqueData);
+  closeModal(); showToast('Item salvo.','ok'); pintarEstoque();
+}
+async function excluirEstoque(id){
+  if(!confirm('Excluir este item do estoque?')) return;
+  estoqueData=estoqueData.filter(x=>x.id!==id);
+  await saveList('estoque',estoqueData);
+  closeModal(); showToast('Item excluído.','ok'); pintarEstoque();
+}
+</script>
+<script>
+/* ================= PROCEDIMENTOS (protocolo de insumos + precificação) ================= */
+let procData=[]; let procEstoque=[]; let procItensTemp=[]; let procDraft={nome:'',margem:30,precoManual:''};
+async function renderProcedimentos(){
+  $('topbarActs').innerHTML=`<button class="btn primary" onclick="abrirModalProcedimento()">+ Procedimento</button>`;
+  $('content').innerHTML='<div class="empty">Carregando…</div>';
+  [procData,procEstoque]=await Promise.all([loadList('procedimentos'),loadList('estoque')]);
+  pintarProcedimentos();
+}
+function custoProcedimento(p){
+  return (p.itens||[]).reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+}
+function precoSugerido(p){
+  const custo=custoProcedimento(p); const m=Number(p.margem||0);
+  if(m<=0||m>=100) return custo;
+  return custo/(1-m/100);
+}
+function pintarProcedimentos(){
+  $('content').innerHTML=`<div class="panel">
+    ${procData.length?`<table class="tbl"><thead><tr><th>Procedimento</th><th>Insumos</th><th>Custo</th><th>Margem</th><th>Preço sugerido</th><th></th></tr></thead><tbody>
+      ${procData.map(p=>{
+        const custo=custoProcedimento(p), sugerido=precoSugerido(p);
+        return `<tr><td>${p.nome}</td><td>${(p.itens||[]).length} item(ns)</td><td class="mono">${BRL(custo)}</td><td>${p.margem||0}%</td>
+          <td class="mono" style="font-weight:600">${BRL(p.precoManual||sugerido)}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalProcedimento('${p.id}')">✎</button></td></tr>`;
+      }).join('')}
+    </tbody></table>`:`<div class="empty"><div class="big">Nenhum procedimento cadastrado</div>Cadastre os procedimentos com os insumos que cada um consome — o custo e o preço sugerido são calculados sozinhos.</div>`}
+  </div>`;
+}
+function abrirModalProcedimento(id){
+  const p=id?procData.find(x=>x.id===id):null;
+  procItensTemp = p ? JSON.parse(JSON.stringify(p.itens||[])) : [];
+  procDraft = p ? {nome:p.nome,margem:p.margem||30,precoManual:p.precoManual||''} : {nome:'',margem:30,precoManual:''};
+  renderModalProcedimento(id||null);
+}
+function renderModalProcedimento(id){
+  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const margem=Number(procDraft.margem||0);
+  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
+  openModal(`
+    <div class="modalHead"><h3>${id?'Editar procedimento':'Novo procedimento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele" value="${procDraft.nome||''}" onchange="procDraft.nome=this.value"></div>
+      <div class="field"><label>Insumos consumidos</label>
+        <div id="prItensList">${procItensTemp.map((it,idx)=>{
+          const e=procEstoque.find(x=>x.id===it.estoqueId);
+          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <span style="flex:1;font-size:13px">${e?e.nome:'(item removido)'}</span>
+            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${it.qtd} ${e?e.unidade||'':''}</span>
+            <button class="iconBtn" onclick="removerItemProc(${idx},'${id||''}')">🗑</button>
+          </div>`;
+        }).join('') || '<p style="font-size:12.5px;color:var(--gray)">Nenhum insumo adicionado ainda.</p>'}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <select id="prItemSel" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--paper)">
+            ${procEstoque.map(e=>`<option value="${e.id}">${e.nome} (${BRL(e.custoUnitario||0)}/${e.unidade||'un'})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
+          </select>
+          <input type="number" step="0.01" id="prItemQtd" placeholder="Qtd" value="1" style="width:80px;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
+          <button class="btn sm" onclick="adicionarItemProc('${id||''}')">Adicionar</button>
+        </div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" id="prMargem" value="${margem}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
+        <div class="field"><label>Preço manual (opcional, sobrepõe o sugerido)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" onchange="procDraft.precoManual=this.value"></div>
+      </div>
+      <div class="card" style="background:var(--teal-soft);border:none">
+        <div style="display:flex;justify-content:space-between;font-size:13px"><span>Custo dos insumos</span><b class="mono" id="prCustoView">${BRL(custo)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Preço sugerido</span><b class="mono" id="prSugeridoView" style="color:var(--teal)">${BRL(sugerido)}</b></div>
+      </div>
+    </div>
+    <div class="modalFoot">
+      ${id?`<button class="btn danger" onclick="excluirProcedimento('${id}')">Excluir</button>`:''}
+      <button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvarProcedimento(${id?`'${id}'`:'null'})">Salvar</button>
+    </div>
+  `);
+}
+function adicionarItemProc(id){
+  const sel=$('prItemSel'); const estoqueId=sel.value; const qtd=parseFloat($('prItemQtd').value)||0;
+  if(!estoqueId||qtd<=0){showToast('Escolha um item e uma quantidade.','err');return;}
+  const existente=procItensTemp.find(it=>it.estoqueId===estoqueId);
+  if(existente) existente.qtd=Number(existente.qtd)+qtd; else procItensTemp.push({estoqueId,qtd});
+  renderModalProcedimento(id||null);
+}
+function removerItemProc(idx,id){
+  procItensTemp.splice(idx,1);
+  renderModalProcedimento(id||null);
+}
+function atualizarPrecoModal(){
+  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const margem=Number($('prMargem').value||0);
+  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
+  $('prCustoView').textContent=BRL(custo); $('prSugeridoView').textContent=BRL(sugerido);
+}
+async function salvarProcedimento(id){
+  const nome=$('prNome').value.trim();
+  if(!nome){showToast('Digite o nome do procedimento.','err');return;}
+  const obj={id:id||uid(),nome,itens:procItensTemp,margem:parseFloat($('prMargem').value)||0,precoManual:parseFloat($('prPrecoManual').value)||0};
+  const idx=procData.findIndex(x=>x.id===obj.id);
+  if(idx>=0) procData[idx]=obj; else procData.push(obj);
+  await saveList('procedimentos',procData);
+  closeModal(); showToast('Procedimento salvo.','ok'); pintarProcedimentos();
+}
+async function excluirProcedimento(id){
+  if(!confirm('Excluir este procedimento?')) return;
+  procData=procData.filter(x=>x.id!==id);
+  await saveList('procedimentos',procData);
+  closeModal(); showToast('Procedimento excluído.','ok'); pintarProcedimentos();
+}
+</script>
+<script>
+/* ================= RELATÓRIOS ================= */
+let chartFin=null, chartStatus=null;
+async function renderRelatorios(){
+  $('topbarActs').innerHTML='';
+  $('content').innerHTML=`
+    <div class="grid" style="grid-template-columns:1.4fr 1fr">
+      <div class="panel"><div class="panelHead"><h2>Receita x despesa (últimos 6 meses)</h2></div>
+        <div style="padding:18px"><canvas id="cvFin" height="110"></canvas></div></div>
+      <div class="panel"><div class="panelHead"><h2>Consultas por status (mês atual)</h2></div>
+        <div style="padding:18px"><canvas id="cvStatus" height="110"></canvas></div></div>
+    </div>
+    <div class="panel" style="margin-top:16px"><div class="panelHead"><h2>Itens mais consumidos no estoque</h2></div>
+      <div style="padding:18px"><canvas id="cvEstoque" height="90"></canvas></div></div>
+  `;
+  const [lanc,agend,estoque]=await Promise.all([loadList('lancamentos'),loadList('agendamentos'),loadList('estoque')]);
+
+  const meses=[]; const now=new Date();
+  for(let i=5;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); meses.push(d.toISOString().slice(0,7)); }
+  const receitas=meses.map(m=>lanc.filter(l=>l.tipo==='receita'&&l.data.slice(0,7)===m).reduce((s,l)=>s+Number(l.valor||0),0));
+  const despesas=meses.map(m=>lanc.filter(l=>l.tipo==='despesa'&&l.data.slice(0,7)===m).reduce((s,l)=>s+Number(l.valor||0),0));
+  const labelsMeses=meses.map(m=>new Date(m+'-01').toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}));
+
+  if(chartFin) chartFin.destroy();
+  chartFin=new Chart($('cvFin'),{type:'bar',data:{labels:labelsMeses,datasets:[
+    {label:'Receita',data:receitas,backgroundColor:'#2F6659'},
+    {label:'Despesa',data:despesas,backgroundColor:'#C1543F'}
+  ]},options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+
+  const mesAtual=hojeISO().slice(0,7);
+  const doMes=agend.filter(a=>a.data.slice(0,7)===mesAtual);
+  const statusOrdem=['agendado','confirmado','atendido','faltou','cancelado'];
+  const contagem=statusOrdem.map(s=>doMes.filter(a=>a.status===s).length);
+  if(chartStatus) chartStatus.destroy();
+  chartStatus=new Chart($('cvStatus'),{type:'doughnut',data:{labels:statusOrdem.map(statusLabel),datasets:[{
+    data:contagem,backgroundColor:['#3B5C78','#2F6659','#8B8272','#B9862E','#C1543F']
+  }]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
+
+  const topEstoque=[...estoque].sort((a,b)=>Number(b.minimo||0)-Number(a.minimo||0)).slice(0,8);
+  if(chartEstoqueBar) chartEstoqueBar.destroy();
+  chartEstoqueBar=new Chart($('cvEstoque'),{type:'bar',data:{labels:topEstoque.map(i=>i.nome),datasets:[
+    {label:'Quantidade atual',data:topEstoque.map(i=>Number(i.qtd||0)),backgroundColor:'#3B5C78'},
+    {label:'Mínimo',data:topEstoque.map(i=>Number(i.minimo||0)),backgroundColor:'#DCD6C4'}
+  ]},options:{responsive:true,indexAxis:'y',plugins:{legend:{position:'bottom'}}}});
+}
+let chartEstoqueBar=null;
+
+/* ================= CONFIGURAÇÕES ================= */
+async function loadConfigClinica(){
+  try{ return JSON.parse(await store.get('clinica:config')||'{}'); }catch(e){ return {}; }
+}
+async function renderConfig(){
+  $('topbarActs').innerHTML='';
+  const cfg=await loadConfigClinica();
+  $('content').innerHTML=`
+    <div class="panel" style="max-width:640px;margin-bottom:16px">
+      <div class="panelHead"><h2>Marca da clínica</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Sua logo e sua cor aparecem no menu lateral e, pra quem já usa neste computador, na própria tela de login.</p>
+        <div class="field"><label>Nome de exibição</label><input id="cfgNomeExib" placeholder="${clinicaNome}" value="${cfg.nomeExibicao||''}"></div>
+        <div class="formRow">
+          <div class="field"><label>Cor principal</label><input type="color" id="cfgCor" value="${cfg.corPrincipal||'#2F6659'}" style="height:42px;padding:4px"></div>
+          <div class="field"><label>Logo (imagem)</label><input type="file" id="cfgLogoFile" accept="image/*"></div>
+        </div>
+        ${cfg.logo?`<div style="margin-bottom:10px"><img src="${cfg.logo}" style="height:44px;border-radius:8px;border:1px solid var(--line)"><button class="btn sm" style="margin-left:10px" onclick="removerLogo()">Remover logo</button></div>`:''}
+        <button class="btn primary" onclick="salvarMarca()">Salvar marca</button>
+      </div>
+    </div>
+    <div class="panel" style="max-width:640px;margin-bottom:16px">
+      <div class="panelHead"><h2>Sua clínica</h2></div>
+      <div class="modalBody">
+        <div class="field"><label>Código de convite da equipe</label>
+          <input class="mono" value="${groupId}" readonly onclick="this.select()">
+        </div>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin:-6px 0 0">Compartilhe esse código com quem mais vai usar o Agenda+ nessa clínica — a pessoa cria a conta dela e escolhe "Entrar com código".</p>
+        <div class="field" style="margin-top:14px"><label>Link de convite (já com a marca da clínica)</label>
+          <input class="mono" id="cfgLinkConvite" value="${linkConviteAtual()}" readonly onclick="this.select()">
+        </div>
+        <button class="btn sm" onclick="copiarLinkConvite()">Copiar link</button>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin:8px 0 0">Quem abrir esse link já vê o nome e a logo da clínica antes mesmo de entrar.</p>
+      </div>
+    </div>
+    <div class="panel" style="max-width:640px;margin-bottom:16px">
+      <div class="panelHead"><h2>Lembrete de retorno (WhatsApp)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">O botão 💬 na agenda sempre abre o WhatsApp manual com a mensagem pronta. Use <span class="mono">{nome}</span>, <span class="mono">{data}</span>, <span class="mono">{hora}</span> e <span class="mono">{clinica}</span> no texto.</p>
+        <div class="field"><textarea id="cfgTpl" rows="3">${cfg.templateLembrete||'Olá {nome}! Passando para lembrar da sua consulta em {data} às {hora} na {clinica}. Para confirmar ou remarcar, é só responder por aqui.'}</textarea></div>
+        <button class="btn primary" onclick="salvarConfig()">Salvar</button>
+      </div>
+    </div>
+    <div class="panel" style="max-width:640px">
+      <div class="panelHead"><h2>Envio automático (WhatsApp oficial)</h2></div>
+      <div class="modalBody">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Avançado, opcional. Cole aqui a URL de um webhook seu (Zapier, Make, n8n ou um servidor próprio) que receba os dados e envie pela API oficial do WhatsApp — assim sua chave/token fica protegida no seu servidor, nunca aqui no navegador.</p>
+        <div class="field"><label>URL do webhook</label><input id="cfgWebhook" placeholder="https://hook.us1.make.com/xxxxxxxx" value="${cfg.webhookWhats||''}"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px">
+          <input type="checkbox" id="cfgWebhookOn" ${cfg.webhookAtivo?'checked':''} style="width:auto"> Usar envio automático em vez do link manual quando o webhook estiver configurado
+        </label>
+        <button class="btn primary" onclick="salvarWebhook()">Salvar</button>
+        <button class="btn sm" onclick="testarWebhook()">Enviar teste</button>
+        <p style="font-size:11.5px;color:var(--gray);margin-top:10px">O Agenda+ envia um POST em JSON: <span class="mono">{telefone, mensagem, paciente, data, hora, clinica}</span>. Seu fluxo no Zapier/Make/n8n é quem efetivamente chama a API do WhatsApp Business.</p>
+      </div>
+    </div>`;
+}
+async function salvarWebhook(){
+  const cfg=await loadConfigClinica();
+  cfg.webhookWhats=$('cfgWebhook').value.trim();
+  cfg.webhookAtivo=$('cfgWebhookOn').checked;
+  await store.set('clinica:config',JSON.stringify(cfg));
+  showToast('Configuração de envio automático salva.','ok');
+}
+async function testarWebhook(){
+  const url=$('cfgWebhook').value.trim();
+  if(!url){showToast('Cole a URL do webhook primeiro.','err');return;}
+  try{
+    await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({telefone:'',mensagem:'Mensagem de teste do Agenda+',paciente:'Teste',data:hojeISO(),hora:'10:00',clinica:clinicaNome})});
+    showToast('Teste enviado (confira no seu Zapier/Make/n8n se chegou).','ok');
+  }catch(e){ showToast('Não consegui alcançar essa URL.','err'); }
+}
+function lerImagemBase64(file){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result);
+    r.onerror=()=>rej(new Error('Falha ao ler a imagem'));
+    r.readAsDataURL(file);
+  });
+}
+async function salvarMarca(){
+  const cfg=await loadConfigClinica();
+  cfg.nomeExibicao=$('cfgNomeExib').value.trim();
+  cfg.corPrincipal=$('cfgCor').value;
+  const file=$('cfgLogoFile').files[0];
+  if(file){
+    if(file.size>800*1024){ showToast('Escolha uma imagem menor (até 800KB).','err'); return; }
+    try{ cfg.logo=await lerImagemBase64(file); }catch(e){ showToast('Não consegui ler essa imagem.','err'); return; }
+  }
+  await store.set('clinica:config',JSON.stringify(cfg));
+  await syncClinicaPublica(cfg);
+  aplicarMarca(cfg);
+  try{ localStorage.setItem('agendamais:lastBrand',JSON.stringify({codigo:groupId,nome:cfg.nomeExibicao||clinicaNome,logo:cfg.logo||'',cor:cfg.corPrincipal||''})); }catch(e){}
+  showToast('Marca atualizada.','ok'); renderConfig();
+}
+function syncClinicaPublica(cfg){
+  if(sb && groupId && groupId!=='demo'){
+    return sb.from('clinicas').update({logo:cfg.logo||null,cor:cfg.corPrincipal||null}).eq('grp',groupId).then(()=>{},()=>{});
+  }
+  return Promise.resolve();
+}
+async function removerLogo(){
+  const cfg=await loadConfigClinica();
+  delete cfg.logo;
+  await store.set('clinica:config',JSON.stringify(cfg));
+  await syncClinicaPublica(cfg);
+  aplicarMarca(cfg); showToast('Logo removida.','ok'); renderConfig();
+}
+async function salvarConfig(){
+  const cfg=await loadConfigClinica();
+  cfg.templateLembrete=$('cfgTpl').value;
+  await store.set('clinica:config',JSON.stringify(cfg));
+  showToast('Configurações salvas.','ok');
+}
+
+/* ================= INIT ================= */
+(async function init(){
+  setAuthTab('login'); setOnbTab('create');
+  document.getElementById('modalBg').addEventListener('click',e=>{if(e.target.id==='modalBg')closeModal();});
+  document.getElementById('cfgModal').addEventListener('click',e=>{if(e.target.id==='cfgModal')showCfg(false);});
+  try{
+    const cached=JSON.parse(localStorage.getItem('agendamais:lastBrand')||'null');
+    if(cached){
+      if(cached.cor){ document.documentElement.style.setProperty('--teal',cached.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cached.cor} 16%, white)`); }
+      if(cached.logo) $('gateMark').innerHTML=`<img src="${cached.logo}" alt="Logo">`;
+      if(cached.nome) $('gateName').textContent=cached.nome;
+    }
+  }catch(e){}
+  const codigoUrl=(new URLSearchParams(location.search)).get('c');
+  if(codigoUrl) prefillCodigo=codigoUrl.trim().toUpperCase();
+  if(!initSupabase()){ showCfg(true); return; }
+  if(prefillCodigo){
+    try{
+      const {data}=await sb.from('clinicas').select('nome,logo,cor').eq('grp',prefillCodigo).maybeSingle();
+      if(data){
+        if(data.cor){ document.documentElement.style.setProperty('--teal',data.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${data.cor} 16%, white)`); }
+        $('gateMark').innerHTML = data.logo ? `<img src="${data.logo}" alt="Logo">` : 'A+';
+        $('gateName').textContent = data.nome || 'Agenda+';
+        $('authSub').textContent = `Acesse o painel de ${data.nome}.`;
+      }
+    }catch(e){}
+  }
+  try{
+    const {data}=await sb.auth.getSession();
+    if(data&&data.session){ await afterLogin(); }
+  }catch(e){ console.error(e); }
+})();
+</script>
+<script>
+/* Link de convite: agenda-mais.html?c=CODIGO já mostra a marca da clínica e pré-preenche o código de acesso. */
+function linkConviteAtual(){
+  const url=new URL(location.href); url.search=''; url.searchParams.set('c',groupId);
+  return url.toString();
+}
+async function copiarLinkConvite(){
+  try{ await navigator.clipboard.writeText(linkConviteAtual()); showToast('Link copiado!','ok'); }
+  catch(e){ showToast('Não consegui copiar automaticamente — selecione e copie manualmente.','err'); }
+}
+
