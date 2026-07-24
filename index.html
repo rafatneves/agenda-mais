@@ -181,6 +181,15 @@ a{color:var(--teal)}
   .agendaWrap{flex-direction:column}
   .agendaCal{width:100%}
   .formRow{grid-template-columns:1fr}
+  .iconBtn{padding:9px 10px;font-size:17px}
+  .btn{padding:11px 16px;font-size:14px}
+  .btn.sm{padding:9px 13px;font-size:13.5px}
+  .apptCard{padding:12px 13px}
+  .apptActs{gap:2px}
+  .tbl td,.tbl th{padding:12px 14px}
+  .navItem{padding:12px 10px;font-size:14.5px}
+  .content{padding:16px}
+  .toolbar{gap:8px}
 }
 </style>
 
@@ -235,12 +244,29 @@ a{color:var(--teal)}
 <div id="publico" style="display:none;min-height:100vh;background:var(--paper)"></div>
 
 <div class="modalBg" id="cfgModal">
-  <div class="modal">
-    <div class="modalHead"><h3>Conexão com o banco de dados</h3><button class="modalX" onclick="showCfg(false)">&times;</button></div>
+  <div class="modal" style="max-width:560px">
+    <div class="modalHead"><h3>Conectar seu banco de dados</h3><button class="modalX" onclick="showCfg(false)">&times;</button></div>
     <div class="modalBody">
-      <p style="font-size:13px;color:var(--ink-soft);margin-top:0">O Clara guarda os dados num projeto Supabase. Cole abaixo a URL e a chave <b>anon/public</b> do seu projeto.</p>
-      <div class="field"><label>Project URL</label><input id="cfgUrl" placeholder="https://xxxx.supabase.co"></div>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:0">O Agenda+ guarda os dados de cada clínica num projeto <b>Supabase</b> (grátis pra começar). São 3 passos, uma única vez.</p>
+      <div class="card" style="background:var(--paper2);border:none;margin-bottom:12px">
+        <b style="font-size:13px">1. Crie o projeto</b>
+        <p style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Se ainda não tem, crie gratuitamente em supabase.com (leva ~2 min).</p>
+        <a href="https://supabase.com/dashboard/new" target="_blank" rel="noopener" class="btn sm">Criar projeto no Supabase ↗</a>
+      </div>
+      <div class="field"><label>Project URL</label><input id="cfgUrl" placeholder="https://xxxx.supabase.co" oninput="atualizarLinkSqlEditor()"></div>
       <div class="field"><label>Anon public key</label><input id="cfgKey" placeholder="eyJhbGciOi..."></div>
+      <div class="card" style="background:var(--paper2);border:none;margin-bottom:12px">
+        <b style="font-size:13px">2. Prepare as tabelas</b>
+        <p style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Copie o SQL abaixo e cole no SQL Editor do seu projeto (roda tudo de uma vez, é seguro rodar mais de uma vez).</p>
+        <button class="btn sm" onclick="copiarSQLInstalacao()">Copiar SQL de instalação</button>
+        <a id="linkSqlEditor" href="https://supabase.com/dashboard/project/_/sql/new" target="_blank" rel="noopener" class="btn sm">Abrir SQL Editor ↗</a>
+      </div>
+      <div class="card" style="background:var(--paper2);border:none">
+        <b style="font-size:13px">3. Teste e salve</b>
+        <p style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Confirma se as tabelas foram criadas certinho antes de salvar.</p>
+        <button class="btn sm" onclick="testarConexaoSupabase()">Testar conexão</button>
+        <span id="testeConexaoResultado" style="font-size:12px;margin-left:6px"></span>
+      </div>
       <div class="gateError" id="cfgErr"></div>
     </div>
     <div class="modalFoot"><button class="btn" onclick="showCfg(false)">Cancelar</button><button class="btn primary" onclick="saveCfg()">Salvar e recarregar</button></div>
@@ -323,6 +349,91 @@ create policy pp_select_public on portais_paciente for select using (expira_em i
 create policy pp_write_members on portais_paciente for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
 */
 let sb=null, sbUser=null, groupId=null, clinicaNome='';
+const SQL_INSTALACAO=`create table if not exists painel(grp text not null, k text not null, value jsonb, updated_at timestamptz default now(), primary key(grp,k));
+alter table painel enable row level security;
+create table if not exists workspace_members(user_id uuid references auth.users(id) primary key, grp text not null, role text default 'admin', created_at timestamptz default now(), email text);
+alter table workspace_members enable row level security;
+create table if not exists clinicas(grp text primary key, nome text not null, logo text, cor text, created_at timestamptz default now());
+alter table clinicas enable row level security;
+create table if not exists solicitacoes_publicas(id uuid default gen_random_uuid() primary key, grp text not null, tipo text not null, payload jsonb not null, status text default 'pendente', created_at timestamptz default now());
+alter table solicitacoes_publicas enable row level security;
+create table if not exists portais_paciente(token text primary key, grp text not null, paciente_id text not null, dados jsonb not null, expira_em timestamptz, created_at timestamptz default now());
+alter table portais_paciente enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename='painel' and policyname='painel_rw') then
+    create policy painel_rw on painel for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_own_select') then
+    create policy wm_own_select on workspace_members for select using (user_id=auth.uid());
+  end if;
+  if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_own_insert') then
+    create policy wm_own_insert on workspace_members for insert with check (user_id=auth.uid());
+  end if;
+  if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_select_all') then
+    create policy wm_admin_select_all on workspace_members for select using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_update') then
+    create policy wm_admin_update on workspace_members for update using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin')) with check (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_delete') then
+    create policy wm_admin_delete on workspace_members for delete using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='clinicas' and policyname='clinicas_select_public') then
+    create policy clinicas_select_public on clinicas for select using (true);
+  end if;
+  if not exists (select 1 from pg_policies where tablename='clinicas' and policyname='clinicas_insert_auth') then
+    create policy clinicas_insert_auth on clinicas for insert with check (auth.uid() is not null);
+  end if;
+  if not exists (select 1 from pg_policies where tablename='clinicas' and policyname='clinicas_update_members') then
+    create policy clinicas_update_members on clinicas for update using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='solicitacoes_publicas' and policyname='sp_insert_public') then
+    create policy sp_insert_public on solicitacoes_publicas for insert with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where tablename='solicitacoes_publicas' and policyname='sp_select_members') then
+    create policy sp_select_members on solicitacoes_publicas for select using (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='solicitacoes_publicas' and policyname='sp_update_members') then
+    create policy sp_update_members on solicitacoes_publicas for update using (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='solicitacoes_publicas' and policyname='sp_delete_members') then
+    create policy sp_delete_members on solicitacoes_publicas for delete using (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+  if not exists (select 1 from pg_policies where tablename='portais_paciente' and policyname='pp_select_public') then
+    create policy pp_select_public on portais_paciente for select using (expira_em is null or expira_em > now());
+  end if;
+  if not exists (select 1 from pg_policies where tablename='portais_paciente' and policyname='pp_write_members') then
+    create policy pp_write_members on portais_paciente for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+  end if;
+end $$;`;
+function copiarSQLInstalacao(){ copiarTexto(SQL_INSTALACAO); showToast('SQL copiado — cole no SQL Editor do Supabase e rode.','ok'); }
+function atualizarLinkSqlEditor(){
+  const url=(document.getElementById('cfgUrl').value||'').trim();
+  const m=url.match(/https?:\/\/([a-z0-9-]+)\.supabase\.co/i);
+  const ref=m?m[1]:'_';
+  const a=document.getElementById('linkSqlEditor');
+  if(a) a.href=`https://supabase.com/dashboard/project/${ref}/sql/new`;
+}
+async function testarConexaoSupabase(){
+  const url=document.getElementById('cfgUrl').value.trim(), key=document.getElementById('cfgKey').value.trim();
+  const out=document.getElementById('testeConexaoResultado');
+  out.style.color='var(--ink-soft)'; out.textContent='Testando…';
+  if(!url||!key){ out.style.color='var(--coral)'; out.textContent='Preencha URL e chave primeiro.'; return; }
+  try{
+    const testSb=window.supabase.createClient(url,key);
+    const {error}=await testSb.from('clinicas').select('grp').limit(1);
+    if(error){
+      if(/relation .* does not exist|schema cache/i.test(error.message)){
+        out.style.color='var(--coral)'; out.textContent='Conectou, mas as tabelas ainda não existem — copie e rode o SQL acima.';
+      } else {
+        out.style.color='var(--coral)'; out.textContent='Erro: '+error.message;
+      }
+      return;
+    }
+    out.style.color='var(--teal)'; out.textContent='✓ Conexão ok, tabelas encontradas!';
+  }catch(e){ out.style.color='var(--coral)'; out.textContent='Não consegui conectar — confira a URL e a chave.'; }
+}
 function initSupabase(){
   const url=localStorage.getItem(CFG_URL), key=localStorage.getItem(CFG_KEY);
   if(url&&key&&window.supabase){sb=window.supabase.createClient(url,key);return true;}
@@ -330,7 +441,7 @@ function initSupabase(){
 }
 function showCfg(on){
   document.getElementById('cfgModal').classList.toggle('on',on);
-  if(on){document.getElementById('cfgUrl').value=localStorage.getItem(CFG_URL)||'';document.getElementById('cfgKey').value=localStorage.getItem(CFG_KEY)||'';}
+  if(on){document.getElementById('cfgUrl').value=localStorage.getItem(CFG_URL)||'';document.getElementById('cfgKey').value=localStorage.getItem(CFG_KEY)||'';atualizarLinkSqlEditor();}
 }
 function saveCfg(){
   const url=document.getElementById('cfgUrl').value.trim(), key=document.getElementById('cfgKey').value.trim();
@@ -650,11 +761,33 @@ async function renderDashboard(){
   const lucroMes=receitaMes-despesaMes;
   const baixoEstoque=estoque.filter(i=>Number(i.qtd)<=Number(i.minimo||0));
   const contasAtrasadas=contas.filter(c=>c.status!=='pago'&&c.vencimento<hoje);
+  const em7dias=new Date(); em7dias.setDate(em7dias.getDate()+7);
+  const em7diasISO=em7dias.toISOString().slice(0,10);
+  const contasVencendoEmBreve=contas.filter(c=>c.status!=='pago'&&c.vencimento>=hoje&&c.vencimento<=em7diasISO);
+  const lembretesPendentes=hojeAgend.filter(a=>a.telefone && !a.lembreteStatus);
 
   $('content').innerHTML=`
     ${contasAtrasadas.length?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:13.5px;color:var(--coral)"><b>${contasAtrasadas.length} conta(s) atrasada(s)</b> — total de ${BRL(contasAtrasadas.reduce((s,c)=>s+Number(c.valor||0),0))}</span>
       <button class="btn sm" onclick="goTab('financeiro')">Ver contas</button>
+    </div>`:''}
+    ${(lembretesPendentes.length||contasVencendoEmBreve.length||baixoEstoque.length)?`
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panelHead"><h2>O que falta fazer hoje</h2></div>
+      <div style="padding:6px 18px 16px;display:flex;flex-direction:column;gap:10px">
+        ${lembretesPendentes.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <span style="font-size:13.5px">📤 <b>${lembretesPendentes.length}</b> lembrete(s) de hoje ainda não enviado(s)</span>
+          <button class="btn sm" onclick="goTab('agenda')">Ver agenda</button>
+        </div>`:''}
+        ${contasVencendoEmBreve.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <span style="font-size:13.5px">📅 <b>${contasVencendoEmBreve.length}</b> conta(s) vencendo nos próximos 7 dias — ${BRL(contasVencendoEmBreve.reduce((s,c)=>s+Number(c.valor||0),0))}</span>
+          <button class="btn sm" onclick="goTab('financeiro')">Ver contas</button>
+        </div>`:''}
+        ${baixoEstoque.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <span style="font-size:13.5px">📦 <b>${baixoEstoque.length}</b> item(ns) de estoque abaixo do mínimo</span>
+          <button class="btn sm" onclick="goTab('estoque')">Ver estoque</button>
+        </div>`:''}
+      </div>
     </div>`:''}
     <div class="grid cards4">
       <div class="card kpi"><div class="lbl">Consultas hoje</div><div class="val">${hojeAgend.length}</div><div class="sub">${pacientes.length} pacientes cadastrados</div></div>
@@ -754,10 +887,25 @@ function dayTimelineHTML(){
   const titulo=new Date(agendaSelDia+'T00:00:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
   return `<div style="padding:12px 16px 4px;font-weight:600;font-family:'Newsreader',serif;font-size:15px;text-transform:capitalize">${titulo}</div>${rows}`;
 }
+async function marcarStatusRapido(id,novoStatus){
+  const a=agendaData.find(x=>x.id===id); if(!a) return;
+  const anteriorStatus=a.status;
+  a.status=novoStatus;
+  if(novoStatus==='atendido' && anteriorStatus!=='atendido' && a.procedimentoId && !a.baixaFeita){
+    await processarProcedimentoNaConsulta(a);
+    a.baixaFeita=true;
+  }
+  await saveList('agendamentos',agendaData);
+  await registrarAuditoria('Mudou status rápido do agendamento',a.pacienteNome+' → '+statusLabel(novoStatus));
+  showToast(`Marcado como ${statusLabel(novoStatus).toLowerCase()}.`,'ok');
+  pintarAgenda();
+}
 function apptCardHTML(a){
+  const lembreteIcon={enviado:'✅',aberto:'📤',falhou:'⚠️'}[a.lembreteStatus]||'';
   return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${a.id}')">
-    <div><div class="who">${a.pacienteNome}</div><div class="what">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''} · ${a.hora}</div></div>
+    <div><div class="who">${a.pacienteNome}</div><div class="what">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''} · ${a.hora}${lembreteIcon?` <span title="Lembrete: ${a.lembreteStatus} em ${fmtDataHora(a.lembreteEm)}">${lembreteIcon}</span>`:''}</div></div>
     <div class="apptActs">
+      ${(a.status==='agendado'||a.status==='confirmado')?`<button class="iconBtn" title="Marcar atendido" onclick="event.stopPropagation();marcarStatusRapido('${a.id}','atendido')" style="font-size:17px">✓</button>`:''}
       <button class="iconBtn" title="Teleconsulta" onclick="event.stopPropagation();iniciarTeleconsulta('${a.id}')">🎥</button>
       <button class="iconBtn" title="Lembrete WhatsApp" onclick="event.stopPropagation();lembreteWhats('${a.id}')">💬</button>
       ${a.status==='atendido'?`<button class="iconBtn" title="Pedir avaliação (NPS)" onclick="event.stopPropagation();pedirAvaliacao('${a.id}')">⭐</button>`:''}
@@ -890,10 +1038,19 @@ async function lembreteWhats(id){
     try{
       await fetch(cfg.webhookWhats,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({telefone:a.telefone,mensagem:msg,paciente:a.pacienteNome,data:a.data,hora:a.hora,clinica:clinicaNome})});
-      showToast('Lembrete enviado pelo fluxo automático.','ok'); return;
-    }catch(e){ showToast('Webhook falhou, abrindo envio manual…','err'); }
+      a.lembreteStatus='enviado'; a.lembreteEm=new Date().toISOString();
+      await saveList('agendamentos',agendaData);
+      showToast('Lembrete enviado pelo fluxo automático.','ok'); pintarAgenda(); return;
+    }catch(e){
+      a.lembreteStatus='falhou'; a.lembreteEm=new Date().toISOString();
+      await saveList('agendamentos',agendaData);
+      showToast('Webhook falhou, abrindo envio manual…','err');
+    }
   }
   window.open(waLink(a.telefone,msg),'_blank');
+  a.lembreteStatus='aberto'; a.lembreteEm=new Date().toISOString();
+  await saveList('agendamentos',agendaData);
+  pintarAgenda();
 }
 async function pedirAvaliacao(id){
   const a=agendaData.find(x=>x.id===id); if(!a) return;
@@ -906,7 +1063,10 @@ async function pedirAvaliacao(id){
 /* ================= PACIENTES ================= */
 let pacientesData=[]; let pacientesBusca='';
 async function renderPacientes(){
-  $('topbarActs').innerHTML=`<button class="btn sm" onclick="exportarPacientesCSV()">Exportar CSV</button> <button class="btn primary" onclick="abrirModalPaciente()">+ Novo paciente</button>`;
+  $('topbarActs').innerHTML=`<input type="file" id="pacientesImportFile" accept=".csv" style="display:none" onchange="importarPacientesCSV(this.files[0])">
+    <button class="btn sm" onclick="document.getElementById('pacientesImportFile').click()">Importar CSV</button>
+    <button class="btn sm" onclick="exportarPacientesCSV()">Exportar CSV</button>
+    <button class="btn primary" onclick="abrirModalPaciente()">+ Novo paciente</button>`;
   $('content').innerHTML='<div class="empty">Carregando…</div>';
   pacientesData=await loadList('pacientes');
   pintarPacientes();
@@ -917,20 +1077,77 @@ function exportarPacientesCSV(){
     {titulo:'Nascimento',get:p=>p.nascimento?fmtData(p.nascimento):''},{titulo:'Observações',campo:'obs'}
   ],pacientesData);
 }
+function parseCSVSimples(texto){
+  const linhas=texto.replace(/\r/g,'').split('\n').filter(l=>l.trim().length);
+  if(!linhas.length) return [];
+  const delim=linhas[0].includes(';')?';':',';
+  function splitLinha(l){
+    const out=[]; let atual=''; let dentroAspas=false;
+    for(let i=0;i<l.length;i++){
+      const c=l[i];
+      if(c==='"'){ dentroAspas=!dentroAspas; continue; }
+      if(c===delim && !dentroAspas){ out.push(atual); atual=''; continue; }
+      atual+=c;
+    }
+    out.push(atual);
+    return out.map(s=>s.trim());
+  }
+  const header=splitLinha(linhas[0]).map(h=>h.toLowerCase());
+  return linhas.slice(1).map(l=>{
+    const cols=splitLinha(l); const obj={};
+    header.forEach((h,i)=>obj[h]=cols[i]||'');
+    return obj;
+  });
+}
+function normalizarDataBR(s){
+  if(!s) return '';
+  s=s.trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return '';
+}
+async function importarPacientesCSV(file){
+  if(!file) return;
+  try{
+    const texto=await file.text();
+    const linhas=parseCSVSimples(texto);
+    if(!linhas.length){ showToast('Não achei linhas nesse CSV.','err'); return; }
+    const colNome=Object.keys(linhas[0]).find(k=>/nome/i.test(k))||'nome';
+    const colTel=Object.keys(linhas[0]).find(k=>/telefone|celular|whats/i.test(k))||'telefone';
+    const colNasc=Object.keys(linhas[0]).find(k=>/nasc/i.test(k))||'nascimento';
+    const colObs=Object.keys(linhas[0]).find(k=>/obs|hist/i.test(k))||'obs';
+    let novos=0, ignorados=0;
+    linhas.forEach(l=>{
+      const nome=(l[colNome]||'').trim();
+      if(!nome){ ignorados++; return; }
+      const jaExiste=pacientesData.some(p=>p.nome.toLowerCase()===nome.toLowerCase());
+      if(jaExiste){ ignorados++; return; }
+      pacientesData.push({id:uid(),nome,telefone:soDigitos(l[colTel]||''),nascimento:normalizarDataBR(l[colNasc]||''),obs:(l[colObs]||'').trim(),consentimentoLgpdEm:null});
+      novos++;
+    });
+    await saveList('pacientes',pacientesData);
+    await registrarAuditoria('Importou pacientes via CSV',`${novos} novo(s), ${ignorados} ignorado(s)`);
+    showToast(`${novos} paciente(s) importado(s)${ignorados?`, ${ignorados} ignorado(s) (sem nome ou já existente)`:''}.`,'ok');
+    pintarPacientes();
+  }catch(e){ showToast('Não consegui ler esse arquivo CSV.','err'); }
+}
 function pintarPacientes(){
   const q=pacientesBusca.toLowerCase();
   const lista=pacientesData.filter(p=>!q||p.nome.toLowerCase().includes(q)||soDigitos(p.telefone).includes(soDigitos(q)));
   $('content').innerHTML=`
     <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${pacientesBusca}"></div>
     <div class="panel">
-      ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th></th></tr></thead><tbody>
+      ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th>LGPD</th><th></th></tr></thead><tbody>
         ${lista.map(p=>`<tr style="cursor:pointer" onclick="abrirModalPaciente('${p.id}')"><td>${p.nome}</td><td class="mono">${p.telefone||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
+          <td>${p.anonimizadoEm?'<span class="tag">Anonimizado</span>':p.consentimentoLgpdEm?'<span class="badge confirmado">Consentiu</span>':'<span class="badge faltou">Pendente</span>'}</td>
           <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${p.telefone||''}',''),'_blank')">💬</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum paciente ainda</div>Cadastre o primeiro paciente pra começar a usar a agenda.</div>`}
     </div>`;
 }
-function abrirModalPaciente(id){
+async function abrirModalPaciente(id){
   const p=id?pacientesData.find(x=>x.id===id):null;
+  const cfg=await loadConfigClinica();
   openModal(`
     <div class="modalHead"><h3>${p?'Editar paciente':'Novo paciente'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
@@ -940,12 +1157,7 @@ function abrirModalPaciente(id){
         <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?p.nascimento||'':''}"></div>
       </div>
       <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?p.obs||'':''}</textarea></div>
-      <div class="field" style="background:var(--paper2);border-radius:8px;padding:10px 12px">
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;font-weight:400;margin:0">
-          <input type="checkbox" id="pConsentimento" style="width:auto;margin-top:2px" ${p&&p.consentimentoLgpdEm?'checked':''}>
-          <span>Paciente autorizou o uso dos dados (LGPD) — consentimento livre, informado e específico para dados de saúde. ${p&&p.consentimentoLgpdEm?`<b>Registrado em ${fmtDataHora(p.consentimentoLgpdEm)}.</b>`:''}</span>
-        </label>
-      </div>
+      ${p ? renderConsentimentoBox(p,cfg) : `<p style="font-size:12px;color:var(--gray)">Depois de salvar, você poderá registrar o consentimento LGPD deste paciente.</p>`}
     </div>
     <div class="modalFoot">
       ${p&&podeVerProntuario()?`<button class="btn" onclick="abrirProntuario('${p.id}')">Ver prontuário</button>`:''}
@@ -957,6 +1169,72 @@ function abrirModalPaciente(id){
       <button class="btn primary" onclick="salvarPaciente(${p?`'${p.id}'`:'null'})">Salvar</button>
     </div>
   `);
+  if(p && !(p.consentimentoLgpdEm) ) initAssinaturaCanvas();
+}
+function renderConsentimentoBox(p,cfg){
+  if(p.consentimentoLgpdEm){
+    return `<div class="card" style="background:var(--teal-soft);border:none;padding:12px">
+      <div style="font-size:13px;color:var(--teal)"><b>✓ Consentimento LGPD registrado</b></div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">${p.consentimentoNome?`Por ${p.consentimentoNome}, `:''}em ${fmtDataHora(p.consentimentoLgpdEm)}</div>
+      ${p.consentimentoAssinatura?`<img src="${p.consentimentoAssinatura}" style="max-width:220px;margin-top:8px;border:1px solid var(--line);border-radius:8px;background:#fff;display:block">`:''}
+      <button class="btn sm" style="margin-top:8px" onclick="revogarConsentimento('${p.id}')">Revogar consentimento</button>
+    </div>`;
+  }
+  const termo=cfg.termoLgpd||'Autorizo o tratamento dos meus dados pessoais e de saúde por esta clínica, exclusivamente para fins de agendamento, atendimento clínico, financeiro e comunicação sobre minhas consultas, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).';
+  return `<div class="card" style="background:var(--paper2);border:none;padding:12px">
+    <div style="font-weight:600;font-size:13px;margin-bottom:6px">Consentimento LGPD (dado de saúde)</div>
+    <textarea readonly rows="4" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink-soft)">${termo}</textarea>
+    <div class="field" style="margin-top:10px"><label>Nome de quem autorizou (paciente ou responsável)</label><input id="consNome" placeholder="Nome completo" value="${p.nome}"></div>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-bottom:8px">
+      <input type="checkbox" id="consCheck" style="width:auto;margin-top:2px"> Li e confirmo que este termo foi lido/explicado ao paciente ou responsável, que autorizou.
+    </label>
+    <label style="font-size:12px;font-weight:600;color:var(--ink-soft);display:block;margin-bottom:4px">Assinatura (desenhe com o dedo ou o mouse)</label>
+    <canvas id="assinaturaCanvas" style="width:100%;height:140px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;display:block"></canvas>
+    <button class="btn sm" style="margin-top:6px" onclick="limparAssinatura()">Limpar assinatura</button>
+    <button class="btn sm primary" style="margin-top:6px" onclick="registrarConsentimento('${p.id}')">Registrar consentimento</button>
+    <p style="font-size:11px;color:var(--gray);margin:8px 0 0">Isso registra nome + data/hora + o traço da assinatura — uma assinatura simples. Pra validade jurídica plena (ICP-Brasil), configure um provedor de assinatura em Configurações → Integrações.</p>
+  </div>`;
+}
+let assinaturaDesenhando=false, assinaturaTemTraco=false;
+function initAssinaturaCanvas(){
+  const cv=$('assinaturaCanvas'); if(!cv) return;
+  cv.width=cv.clientWidth*2; cv.height=cv.clientHeight*2;
+  const ctx=cv.getContext('2d');
+  ctx.strokeStyle='#20281F'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.lineJoin='round';
+  assinaturaTemTraco=false;
+  function pos(e){ const r=cv.getBoundingClientRect(); return {x:(e.clientX-r.left)*(cv.width/r.width), y:(e.clientY-r.top)*(cv.height/r.height)}; }
+  cv.onpointerdown=e=>{ assinaturaDesenhando=true; assinaturaTemTraco=true; const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove=e=>{ if(!assinaturaDesenhando) return; const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); };
+  cv.onpointerup=()=>{ assinaturaDesenhando=false; };
+  cv.onpointerleave=()=>{ assinaturaDesenhando=false; };
+}
+function limparAssinatura(){
+  const cv=$('assinaturaCanvas'); if(!cv) return;
+  cv.getContext('2d').clearRect(0,0,cv.width,cv.height); assinaturaTemTraco=false;
+}
+async function registrarConsentimento(id){
+  const nome=$('consNome').value.trim();
+  if(!nome){showToast('Digite o nome de quem autorizou.','err');return;}
+  if(!$('consCheck').checked){showToast('Confirme que o termo foi lido e autorizado.','err');return;}
+  if(!assinaturaTemTraco){showToast('Peça pra assinar no campo acima antes de registrar.','err');return;}
+  const cv=$('assinaturaCanvas');
+  const p=pacientesData.find(x=>x.id===id); if(!p) return;
+  p.consentimentoLgpdEm=new Date().toISOString();
+  p.consentimentoNome=nome;
+  p.consentimentoAssinatura=cv.toDataURL('image/png');
+  await saveList('pacientes',pacientesData);
+  await registrarAuditoria('Registrou consentimento LGPD',p.nome);
+  showToast('Consentimento registrado.','ok');
+  abrirModalPaciente(id);
+}
+async function revogarConsentimento(id){
+  if(!confirm('Revogar o consentimento LGPD deste paciente?')) return;
+  const p=pacientesData.find(x=>x.id===id); if(!p) return;
+  p.consentimentoLgpdEm=null; delete p.consentimentoNome; delete p.consentimentoAssinatura;
+  await saveList('pacientes',pacientesData);
+  await registrarAuditoria('Revogou consentimento LGPD',p.nome);
+  showToast('Consentimento revogado.','ok');
+  abrirModalPaciente(id);
 }
 
 /* ---- Prontuário: evolução por consulta + anexos + odontograma + assinatura + prescrição ---- */
@@ -1097,7 +1375,9 @@ async function salvarPaciente(id){
   if(!nome){showToast('Digite o nome do paciente.','err');return;}
   const anterior=id?pacientesData.find(p=>p.id===id):null;
   const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,obs:$('pObs').value.trim(),
-    consentimentoLgpdEm: $('pConsentimento').checked ? (anterior&&anterior.consentimentoLgpdEm?anterior.consentimentoLgpdEm:new Date().toISOString()) : null};
+    consentimentoLgpdEm: anterior?anterior.consentimentoLgpdEm||null:null,
+    consentimentoNome: anterior?anterior.consentimentoNome:undefined,
+    consentimentoAssinatura: anterior?anterior.consentimentoAssinatura:undefined};
   const idx=pacientesData.findIndex(p=>p.id===obj.id);
   if(idx>=0) pacientesData[idx]=obj; else pacientesData.push(obj);
   await saveList('pacientes',pacientesData);
@@ -1190,7 +1470,7 @@ async function anonimizarPaciente(id){
   if(!confirm('Isso substitui nome, telefone e observações por dados anônimos (irreversível), mantendo o histórico financeiro/estatístico. Confirma?')) return;
   const p=pacientesData.find(x=>x.id===id); if(!p) return;
   const nomeAntigo=p.nome;
-  p.nome='Paciente anonimizado'; p.telefone=''; p.obs=''; p.nascimento=''; p.consentimentoLgpdEm=null; p.anonimizadoEm=new Date().toISOString();
+  p.nome='Paciente anonimizado'; p.telefone=''; p.obs=''; p.nascimento=''; p.consentimentoLgpdEm=null; delete p.consentimentoNome; delete p.consentimentoAssinatura; p.anonimizadoEm=new Date().toISOString();
   await saveList('pacientes',pacientesData);
   const evol=await loadList('evolucoes');
   evol.forEach(e=>{ if(e.pacienteId===id){ e.texto='[conteúdo removido a pedido do paciente — LGPD]'; delete e.anexoData; delete e.anexoNome; } });
