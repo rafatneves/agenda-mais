@@ -1068,13 +1068,16 @@ async function renderPacientes(){
     <button class="btn sm" onclick="exportarPacientesCSV()">Exportar CSV</button>
     <button class="btn primary" onclick="abrirModalPaciente()">+ Novo paciente</button>`;
   $('content').innerHTML='<div class="empty">Carregando…</div>';
-  pacientesData=await loadList('pacientes');
+  [pacientesData,conveniosData]=await Promise.all([loadList('pacientes'),loadList('convenios')]);
   pintarPacientes();
 }
 function exportarPacientesCSV(){
   exportarCSV('pacientes.csv',[
-    {titulo:'Nome',campo:'nome'},{titulo:'Telefone',campo:'telefone'},
-    {titulo:'Nascimento',get:p=>p.nascimento?fmtData(p.nascimento):''},{titulo:'Observações',campo:'obs'}
+    {titulo:'Nome',campo:'nome'},{titulo:'Telefone',campo:'telefone'},{titulo:'CPF',campo:'cpf'},{titulo:'E-mail',campo:'email'},
+    {titulo:'Nascimento',get:p=>p.nascimento?fmtData(p.nascimento):''},{titulo:'Sexo',campo:'sexo'},{titulo:'Endereço',campo:'endereco'},
+    {titulo:'Alergias',campo:'alergias'},{titulo:'Contato emergência',get:p=>[p.emergenciaNome,p.emergenciaTelefone].filter(Boolean).join(' - ')},
+    {titulo:'Convênio',get:p=>{const c=conveniosData.find(x=>x.id===p.convenioId);return c?c.nome:'';}},{titulo:'Carteirinha',campo:'carteirinha'},
+    {titulo:'Observações',campo:'obs'}
   ],pacientesData);
 }
 function parseCSVSimples(texto){
@@ -1117,13 +1120,20 @@ async function importarPacientesCSV(file){
     const colTel=Object.keys(linhas[0]).find(k=>/telefone|celular|whats/i.test(k))||'telefone';
     const colNasc=Object.keys(linhas[0]).find(k=>/nasc/i.test(k))||'nascimento';
     const colObs=Object.keys(linhas[0]).find(k=>/obs|hist/i.test(k))||'obs';
+    const colCpf=Object.keys(linhas[0]).find(k=>/cpf/i.test(k))||'cpf';
+    const colEmail=Object.keys(linhas[0]).find(k=>/e-?mail/i.test(k))||'email';
+    const colEndereco=Object.keys(linhas[0]).find(k=>/endere[cç]o/i.test(k))||'endereco';
+    const colSexo=Object.keys(linhas[0]).find(k=>/sexo|g[eê]nero/i.test(k))||'sexo';
+    const colAlergias=Object.keys(linhas[0]).find(k=>/alergia/i.test(k))||'alergias';
     let novos=0, ignorados=0;
     linhas.forEach(l=>{
       const nome=(l[colNome]||'').trim();
       if(!nome){ ignorados++; return; }
       const jaExiste=pacientesData.some(p=>p.nome.toLowerCase()===nome.toLowerCase());
       if(jaExiste){ ignorados++; return; }
-      pacientesData.push({id:uid(),nome,telefone:soDigitos(l[colTel]||''),nascimento:normalizarDataBR(l[colNasc]||''),obs:(l[colObs]||'').trim(),consentimentoLgpdEm:null});
+      pacientesData.push({id:uid(),nome,telefone:soDigitos(l[colTel]||''),nascimento:normalizarDataBR(l[colNasc]||''),
+        cpf:(l[colCpf]||'').trim(),email:(l[colEmail]||'').trim(),endereco:(l[colEndereco]||'').trim(),sexo:(l[colSexo]||'').trim().toLowerCase(),
+        alergias:(l[colAlergias]||'').trim(),obs:(l[colObs]||'').trim(),consentimentoLgpdEm:null});
       novos++;
     });
     await saveList('pacientes',pacientesData);
@@ -1138,16 +1148,21 @@ function pintarPacientes(){
   $('content').innerHTML=`
     <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${pacientesBusca}"></div>
     <div class="panel">
-      ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th>LGPD</th><th></th></tr></thead><tbody>
-        ${lista.map(p=>`<tr style="cursor:pointer" onclick="abrirModalPaciente('${p.id}')"><td>${p.nome}</td><td class="mono">${p.telefone||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
+      ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th>Convênio</th><th>LGPD</th><th></th></tr></thead><tbody>
+        ${lista.map(p=>{
+          const conv=conveniosData.find(c=>c.id===p.convenioId);
+          return `<tr style="cursor:pointer" onclick="abrirModalPaciente('${p.id}')"><td>${p.nome}${p.alergias?` <span class="badge faltou" title="Alergias: ${p.alergias}">⚠ alergia</span>`:''}</td><td class="mono">${p.telefone||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
+          <td>${conv?conv.nome:'<span style="color:var(--gray)">Particular</span>'}</td>
           <td>${p.anonimizadoEm?'<span class="tag">Anonimizado</span>':p.consentimentoLgpdEm?'<span class="badge confirmado">Consentiu</span>':'<span class="badge faltou">Pendente</span>'}</td>
-          <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${p.telefone||''}',''),'_blank')">💬</button></td></tr>`).join('')}
+          <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${p.telefone||''}',''),'_blank')">💬</button></td></tr>`;
+        }).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum paciente ainda</div>Cadastre o primeiro paciente pra começar a usar a agenda.</div>`}
     </div>`;
 }
 async function abrirModalPaciente(id){
   const p=id?pacientesData.find(x=>x.id===id):null;
   const cfg=await loadConfigClinica();
+  if(!conveniosData.length){ try{ conveniosData=await loadList('convenios'); }catch(e){} }
   openModal(`
     <div class="modalHead"><h3>${p?'Editar paciente':'Novo paciente'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
@@ -1155,6 +1170,34 @@ async function abrirModalPaciente(id){
       <div class="formRow">
         <div class="field"><label>Telefone (WhatsApp)</label><input id="pTel" placeholder="(11) 99999-9999" value="${p?p.telefone||'':''}"></div>
         <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?p.nascimento||'':''}"></div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>CPF</label><input id="pCpf" placeholder="000.000.000-00" value="${p?p.cpf||'':''}"></div>
+        <div class="field"><label>E-mail</label><input type="email" id="pEmail" placeholder="paciente@email.com" value="${p?p.email||'':''}"></div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Sexo/gênero</label><select id="pSexo">
+          <option value="" ${!p||!p.sexo?'selected':''}>Não informado</option>
+          <option value="feminino" ${p&&p.sexo==='feminino'?'selected':''}>Feminino</option>
+          <option value="masculino" ${p&&p.sexo==='masculino'?'selected':''}>Masculino</option>
+          <option value="outro" ${p&&p.sexo==='outro'?'selected':''}>Outro</option>
+        </select></div>
+        <div class="field"><label>Endereço</label><input id="pEndereco" placeholder="Rua, número, bairro, cidade" value="${p?p.endereco||'':''}"></div>
+      </div>
+      <div class="field" style="background:var(--coral-soft);border-radius:8px;padding:10px 12px">
+        <label style="font-size:12px;font-weight:600;color:var(--coral);margin-bottom:5px;display:block">⚠ Alergias</label>
+        <input id="pAlergias" placeholder="Ex: Dipirona, látex, penicilina…" value="${p?p.alergias||'':''}" style="background:#fff">
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Contato de emergência (nome)</label><input id="pEmergNome" placeholder="Nome" value="${p?p.emergenciaNome||'':''}"></div>
+        <div class="field"><label>Contato de emergência (telefone)</label><input id="pEmergTel" placeholder="(11) 99999-9999" value="${p?p.emergenciaTelefone||'':''}"></div>
+      </div>
+      <div class="formRow">
+        <div class="field"><label>Convênio padrão</label><select id="pConvenio">
+          <option value="">Particular / sem convênio</option>
+          ${conveniosData.map(c=>`<option value="${c.id}" ${p&&p.convenioId===c.id?'selected':''}>${c.nome}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>Nº da carteirinha</label><input id="pCarteirinha" placeholder="0000000000" value="${p?p.carteirinha||'':''}"></div>
       </div>
       <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?p.obs||'':''}</textarea></div>
       ${p ? renderConsentimentoBox(p,cfg) : `<p style="font-size:12px;color:var(--gray)">Depois de salvar, você poderá registrar o consentimento LGPD deste paciente.</p>`}
@@ -1258,6 +1301,9 @@ function pintarProntuario(p){
   openModal(`
     <div class="modalHead"><h3>Prontuário — ${p.nome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
+      ${p.alergias?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;padding:10px 12px">
+        <b style="color:var(--coral);font-size:13px">⚠ Alergias: ${p.alergias}</b>
+      </div>`:''}
       <div class="toolbar" style="margin-bottom:14px">
         ${ehOdonto?`<button class="btn sm" onclick="abrirOdontograma('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🦷 Odontograma</button>`:''}
         <button class="btn sm" onclick="abrirPrescricao('${p.id}','${p.nome.replace(/'/g,"\\'")}')">💊 Prescrever</button>
@@ -1374,7 +1420,11 @@ async function salvarPaciente(id){
   const nome=$('pNome').value.trim();
   if(!nome){showToast('Digite o nome do paciente.','err');return;}
   const anterior=id?pacientesData.find(p=>p.id===id):null;
-  const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,obs:$('pObs').value.trim(),
+  const obj={id:id||uid(),nome,telefone:$('pTel').value.trim(),nascimento:$('pNasc').value,
+    cpf:$('pCpf').value.trim(),email:$('pEmail').value.trim(),sexo:$('pSexo').value,endereco:$('pEndereco').value.trim(),
+    alergias:$('pAlergias').value.trim(),emergenciaNome:$('pEmergNome').value.trim(),emergenciaTelefone:$('pEmergTel').value.trim(),
+    convenioId:$('pConvenio').value,carteirinha:$('pCarteirinha').value.trim(),
+    obs:$('pObs').value.trim(),
     consentimentoLgpdEm: anterior?anterior.consentimentoLgpdEm||null:null,
     consentimentoNome: anterior?anterior.consentimentoNome:undefined,
     consentimentoAssinatura: anterior?anterior.consentimentoAssinatura:undefined};
