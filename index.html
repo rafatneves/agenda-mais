@@ -195,7 +195,7 @@ a{color:var(--teal)}
 
 <div id="gate">
   <div class="gateCard">
-    <div class="gateLogo"><div class="mark" id="gateMark">A+</div><div class="name" id="gateName">Agenda+</div></div>
+    <div class="gateLogo" onclick="tocarLogoSecreto()"><div class="mark" id="gateMark">A+</div><div class="name" id="gateName">Agenda+</div></div>
 
     <div id="gateAuth">
       <div class="gateTabs">
@@ -237,7 +237,6 @@ a{color:var(--teal)}
     </div>
 
     <button class="gateBtn ghost" onclick="enterDemo()">Ver demonstração (sem configurar nada)</button>
-    <div class="gateFoot"><a onclick="showCfg(true)">Configurar conexão (Supabase)</a></div>
   </div>
 </div>
 
@@ -434,14 +433,23 @@ async function testarConexaoSupabase(){
     out.style.color='var(--teal)'; out.textContent='✓ Conexão ok, tabelas encontradas!';
   }catch(e){ out.style.color='var(--coral)'; out.textContent='Não consegui conectar — confira a URL e a chave.'; }
 }
+const DEFAULT_SUPABASE_URL='https://hlnqaxchpgijvvsxgdjb.supabase.co';
+const DEFAULT_SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhsbnFheGNocGdpanZ2c3hnZGpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4OTkzMDcsImV4cCI6MjEwMDQ3NTMwN30.Rp1K3VlCF2lvmg1f7gOiSr6U_0OAueqVWmKNyaFLsiI';
+let toqueSecretoCount=0, toqueSecretoTimer=null;
+function tocarLogoSecreto(){
+  toqueSecretoCount++;
+  clearTimeout(toqueSecretoTimer);
+  toqueSecretoTimer=setTimeout(()=>{toqueSecretoCount=0;},1200);
+  if(toqueSecretoCount>=5){ toqueSecretoCount=0; showCfg(true); }
+}
 function initSupabase(){
-  const url=localStorage.getItem(CFG_URL), key=localStorage.getItem(CFG_KEY);
+  const url=localStorage.getItem(CFG_URL)||DEFAULT_SUPABASE_URL, key=localStorage.getItem(CFG_KEY)||DEFAULT_SUPABASE_KEY;
   if(url&&key&&window.supabase){sb=window.supabase.createClient(url,key);return true;}
   return false;
 }
 function showCfg(on){
   document.getElementById('cfgModal').classList.toggle('on',on);
-  if(on){document.getElementById('cfgUrl').value=localStorage.getItem(CFG_URL)||'';document.getElementById('cfgKey').value=localStorage.getItem(CFG_KEY)||'';atualizarLinkSqlEditor();}
+  if(on){document.getElementById('cfgUrl').value=localStorage.getItem(CFG_URL)||DEFAULT_SUPABASE_URL;document.getElementById('cfgKey').value=localStorage.getItem(CFG_KEY)||DEFAULT_SUPABASE_KEY;atualizarLinkSqlEditor();}
 }
 function saveCfg(){
   const url=document.getElementById('cfgUrl').value.trim(), key=document.getElementById('cfgKey').value.trim();
@@ -1297,7 +1305,8 @@ async function abrirProntuario(pacienteId){
 function modelosDisponiveis(){ return [...MODELOS_PADRAO,...prontuarioModelos]; }
 function pintarProntuario(p){
   const minhas=evolucoesData.filter(e=>e.pacienteId===prontuarioPacienteId).sort((a,b)=>b.data.localeCompare(a.data));
-  const ehOdonto=(prontuarioCfg.especialidade==='Odontologia');
+  const esp=prontuarioCfg.especialidade;
+  const ehOdonto=(esp==='Odontologia'), ehPsico=(esp==='Psicologia'), ehFisio=(esp==='Fisioterapia'), ehNutri=(esp==='Nutrição'), ehDermato=(esp==='Dermatologia');
   openModal(`
     <div class="modalHead"><h3>Prontuário — ${p.nome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
@@ -1306,6 +1315,10 @@ function pintarProntuario(p){
       </div>`:''}
       <div class="toolbar" style="margin-bottom:14px">
         ${ehOdonto?`<button class="btn sm" onclick="abrirOdontograma('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🦷 Odontograma</button>`:''}
+        ${ehPsico?`<button class="btn sm" onclick="abrirPacoteSessoes('${p.id}','${p.nome.replace(/'/g,"\\'")}')">📋 Pacote de sessões</button>`:''}
+        ${ehFisio?`<button class="btn sm" onclick="abrirGraficoEvolucao('${p.id}','${p.nome.replace(/'/g,"\\'")}','fisio')">📈 Evolução (dor/amplitude)</button>`:''}
+        ${ehNutri?`<button class="btn sm" onclick="abrirGraficoEvolucao('${p.id}','${p.nome.replace(/'/g,"\\'")}','nutri')">📈 Evolução (peso/IMC)</button>`:''}
+        ${ehDermato?`<button class="btn sm" onclick="abrirMapaCorporal('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🗺️ Mapa corporal</button>`:''}
         <button class="btn sm" onclick="abrirPrescricao('${p.id}','${p.nome.replace(/'/g,"\\'")}')">💊 Prescrever</button>
         <button class="btn sm" onclick="gerenciarModelos()">Modelos de anamnese</button>
       </div>
@@ -1316,6 +1329,14 @@ function pintarProntuario(p){
           ${modelosDisponiveis().map(m=>`<option value="${m.id}">${m.nome} (${m.especialidade})</option>`).join('')}
         </select></div>
       </div>
+      ${ehFisio?`<div class="formRow">
+        <div class="field"><label>Escala de dor (0–10)</label><input type="number" min="0" max="10" id="evDor" placeholder="Ex: 4"></div>
+        <div class="field"><label>Amplitude de movimento (°)</label><input type="number" id="evAmplitude" placeholder="Ex: 90"></div>
+      </div>`:''}
+      ${ehNutri?`<div class="formRow">
+        <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="evPeso" placeholder="Ex: 72.5"></div>
+        <div class="field"><label>Altura (cm)</label><input type="number" id="evAltura" placeholder="Ex: 170" value="${p.alturaCm||''}"></div>
+      </div>`:''}
       <div class="field"><label>Anexo (opcional)</label><input type="file" id="evAnexo" accept="image/*,.pdf"></div>
       <div class="field"><label>Evolução / anotação da consulta</label><textarea id="evTexto" rows="5" placeholder="Queixa, exame, conduta, prescrição…"></textarea></div>
       <button class="btn primary sm" onclick="salvarEvolucao()">Adicionar ao prontuário</button>
@@ -1329,6 +1350,8 @@ function pintarProntuario(p){
                 ${!e.assinadoEm?`<button class="iconBtn" onclick="excluirEvolucao('${e.id}')">🗑</button>`:''}
               </div>
             </div>
+            ${(e.dor!=null||e.amplitude!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Dor: ${e.dor??'—'}/10 · Amplitude: ${e.amplitude??'—'}°</div>`:''}
+            ${(e.pesoKg!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Peso: ${e.pesoKg}kg${e.imc?` · IMC: ${e.imc}`:''}</div>`:''}
             <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${e.texto||''}</div>
             ${e.anexoNome?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${e.anexoData}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${e.anexoData}" download="${e.anexoNome}" class="tag">📎 ${e.anexoNome}</a>`}</div>`:''}
           </div>`).join('') : `<div class="empty">Nenhuma evolução registrada ainda.</div>`}
@@ -1347,6 +1370,13 @@ async function salvarEvolucao(){
   const file=$('evAnexo').files[0];
   if(!texto&&!file){showToast('Escreva algo ou anexe um arquivo.','err');return;}
   const obj={id:uid(),pacienteId:prontuarioPacienteId,data:data||hojeISO(),texto};
+  if($('evDor') && $('evDor').value!=='') obj.dor=parseFloat($('evDor').value);
+  if($('evAmplitude') && $('evAmplitude').value!=='') obj.amplitude=parseFloat($('evAmplitude').value);
+  if($('evPeso') && $('evPeso').value!==''){
+    obj.pesoKg=parseFloat($('evPeso').value);
+    const alturaCm=$('evAltura')?parseFloat($('evAltura').value):0;
+    if(alturaCm>0){ const m=alturaCm/100; obj.imc=Math.round((obj.pesoKg/(m*m))*10)/10; }
+  }
   if(file){
     if(file.size>1.5*1024*1024){showToast('Anexo muito grande (máx. 1,5MB).','err');return;}
     try{ obj.anexoNome=file.name; obj.anexoData=await lerImagemBase64(file); }catch(e){showToast('Não consegui ler o anexo.','err');return;}
@@ -1515,6 +1545,126 @@ async function salvarOdontograma(){
   await saveList('odontogramas',lista);
   await registrarAuditoria('Atualizou odontograma',odontogramaPacienteNome);
   showToast('Odontograma salvo.','ok');
+}
+/* ---- Psicologia: pacote de sessões ---- */
+async function abrirPacoteSessoes(pacienteId,pacienteNome){
+  const lista=await loadList('pacotesSessoes');
+  const pacote=lista.find(x=>x.pacienteId===pacienteId)||{id:uid(),pacienteId,total:0,atualizadoEm:null};
+  const usadas=evolucoesData.filter(e=>e.pacienteId===pacienteId).length;
+  openModal(`
+    <div class="modalHead"><h3>Pacote de sessões — ${pacienteNome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <div class="card" style="background:var(--teal-soft);border:none;margin-bottom:14px">
+        <div style="font-size:14px"><b>${usadas}</b> sessão(ões) registrada(s) no prontuário</div>
+        ${pacote.total>0?`<div style="font-size:13px;margin-top:4px">Pacote contratado: <b>${pacote.total}</b> — restam <b>${Math.max(0,pacote.total-usadas)}</b></div>`:'<div style="font-size:12.5px;color:var(--ink-soft);margin-top:4px">Nenhum pacote definido ainda — cada evolução salva conta como uma sessão.</div>'}
+      </div>
+      <div class="field"><label>Total de sessões contratadas (pacote)</label><input type="number" min="0" id="pctTotal" value="${pacote.total||''}" placeholder="Ex: 10"></div>
+      <p style="font-size:11.5px;color:var(--gray)">Deixe em branco ou 0 se cobrar sessão avulsa, sem pacote fechado.</p>
+    </div>
+    <div class="modalFoot">
+      <button class="btn" onclick="pintarProntuario(pacientesData.find(x=>x.id==='${pacienteId}'))">Voltar ao prontuário</button>
+      <button class="btn primary" onclick="salvarPacoteSessoes('${pacienteId}')">Salvar</button>
+    </div>
+  `);
+}
+async function salvarPacoteSessoes(pacienteId){
+  const total=parseInt($('pctTotal').value)||0;
+  const lista=await loadList('pacotesSessoes');
+  const idx=lista.findIndex(x=>x.pacienteId===pacienteId);
+  const obj={id:idx>=0?lista[idx].id:uid(),pacienteId,total,atualizadoEm:new Date().toISOString()};
+  if(idx>=0) lista[idx]=obj; else lista.push(obj);
+  await saveList('pacotesSessoes',lista);
+  await registrarAuditoria('Atualizou pacote de sessões','paciente='+pacienteId);
+  showToast('Pacote salvo.','ok');
+}
+
+/* ---- Fisioterapia / Nutrição: gráfico de evolução ---- */
+let chartEvolucaoModal=null;
+function abrirGraficoEvolucao(pacienteId,pacienteNome,tipo){
+  const minhas=evolucoesData.filter(e=>e.pacienteId===pacienteId).sort((a,b)=>a.data.localeCompare(b.data));
+  const titulo = tipo==='fisio' ? 'Evolução — dor e amplitude de movimento' : 'Evolução — peso e IMC';
+  openModal(`
+    <div class="modalHead"><h3>${titulo} — ${pacienteNome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <canvas id="cvEvolucaoPaciente" height="180"></canvas>
+      <p style="font-size:11.5px;color:var(--gray);margin-top:10px">Os valores vêm dos campos preenchidos ao adicionar cada evolução no prontuário.</p>
+    </div>
+    <div class="modalFoot"><button class="btn" onclick="pintarProntuario(pacientesData.find(x=>x.id==='${pacienteId}'))">Voltar ao prontuário</button></div>
+  `);
+  const labels=minhas.map(e=>fmtData(e.data));
+  if(chartEvolucaoModal) chartEvolucaoModal.destroy();
+  if(tipo==='fisio'){
+    chartEvolucaoModal=new Chart($('cvEvolucaoPaciente'),{type:'line',data:{labels,datasets:[
+      {label:'Dor (0–10)',data:minhas.map(e=>e.dor??null),borderColor:'#C1543F',backgroundColor:'#C1543F',spanGaps:true},
+      {label:'Amplitude (°)',data:minhas.map(e=>e.amplitude??null),borderColor:'#3B5C78',backgroundColor:'#3B5C78',spanGaps:true,yAxisID:'y1'}
+    ]},options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,max:10},y1:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false}}}}});
+  } else {
+    chartEvolucaoModal=new Chart($('cvEvolucaoPaciente'),{type:'line',data:{labels,datasets:[
+      {label:'Peso (kg)',data:minhas.map(e=>e.pesoKg??null),borderColor:'#2F6659',backgroundColor:'#2F6659',spanGaps:true},
+      {label:'IMC',data:minhas.map(e=>e.imc??null),borderColor:'#B9862E',backgroundColor:'#B9862E',spanGaps:true,yAxisID:'y1'}
+    ]},options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:false},y1:{position:'right',beginAtZero:false,grid:{drawOnChartArea:false}}}}});
+  }
+}
+
+/* ---- Dermatologia: mapa corporal ---- */
+const MAPA_ZONAS=['Couro cabeludo','Face','Pescoço','Tórax','Abdome','Costas','Braço direito','Braço esquerdo','Mão direita','Mão esquerda','Coxa direita','Coxa esquerda','Perna direita','Perna esquerda','Pé direito','Pé esquerdo'];
+const MAPA_ESTADOS=['sem-lesao','observar','em-tratamento','resolvida'];
+const MAPA_LABEL={['sem-lesao']:'Sem lesão',observar:'Lesão a observar',['em-tratamento']:'Em tratamento',resolvida:'Resolvida'};
+const MAPA_COR={['sem-lesao']:'#fff',observar:'var(--amber-soft)',['em-tratamento']:'var(--coral-soft)',resolvida:'var(--teal-soft)'};
+let mapaCorporalData=null, mapaCorporalPacienteId=null, mapaCorporalPacienteNome='';
+async function abrirMapaCorporal(pacienteId,pacienteNome){
+  mapaCorporalPacienteId=pacienteId; mapaCorporalPacienteNome=pacienteNome;
+  const lista=await loadList('mapasCorporais');
+  mapaCorporalData=lista.find(m=>m.pacienteId===pacienteId)||{id:uid(),pacienteId,zonas:{},notas:{},atualizadoEm:null};
+  pintarMapaCorporal();
+}
+function pintarMapaCorporal(){
+  const botoes=MAPA_ZONAS.map(z=>{
+    const st=mapaCorporalData.zonas[z]||'sem-lesao';
+    return `<button class="btn sm" style="background:${MAPA_COR[st]};text-align:left" onclick="cicloZonaMapa('${z}')" title="${MAPA_LABEL[st]}${mapaCorporalData.notas[z]?' — '+mapaCorporalData.notas[z]:''}">${z}</button>`;
+  }).join('');
+  openModal(`
+    <div class="modalHead"><h3>Mapa corporal — ${mapaCorporalPacienteNome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalBody">
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:0">Clique numa região pra alternar o estado (sem lesão → observar → em tratamento → resolvida). Clique com o botão direito (ou toque longo) não é necessário — use o botão "Anotar" pra descrever a lesão.</p>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:12px">${botoes}</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <select id="mapaZonaSel" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:7px">${MAPA_ZONAS.map(z=>`<option value="${z}">${z}</option>`).join('')}</select>
+        <button class="btn sm" onclick="anotarZonaMapa()">Anotar lesão</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${MAPA_ESTADOS.map(s=>`<span class="tag" style="background:${MAPA_COR[s]}">${MAPA_LABEL[s]}</span>`).join('')}
+      </div>
+      ${mapaCorporalData.atualizadoEm?`<p style="font-size:11px;color:var(--gray);margin-top:12px">Última atualização: ${fmtDataHora(mapaCorporalData.atualizadoEm)}</p>`:''}
+    </div>
+    <div class="modalFoot">
+      <button class="btn" onclick="pintarProntuario(pacientesData.find(x=>x.id===mapaCorporalPacienteId))">Voltar ao prontuário</button>
+      <button class="btn primary" onclick="salvarMapaCorporal()">Salvar</button>
+    </div>
+  `);
+}
+function cicloZonaMapa(z){
+  const atual=mapaCorporalData.zonas[z]||'sem-lesao';
+  const idx=MAPA_ESTADOS.indexOf(atual);
+  mapaCorporalData.zonas[z]=MAPA_ESTADOS[(idx+1)%MAPA_ESTADOS.length];
+  pintarMapaCorporal();
+}
+function anotarZonaMapa(){
+  const z=$('mapaZonaSel').value;
+  const nota=prompt('Descreva a lesão em "'+z+'":',mapaCorporalData.notas[z]||'');
+  if(nota===null) return;
+  mapaCorporalData.notas[z]=nota.trim();
+  if(nota.trim() && (mapaCorporalData.zonas[z]||'sem-lesao')==='sem-lesao') mapaCorporalData.zonas[z]='observar';
+  pintarMapaCorporal();
+}
+async function salvarMapaCorporal(){
+  mapaCorporalData.atualizadoEm=new Date().toISOString();
+  const lista=await loadList('mapasCorporais');
+  const idx=lista.findIndex(m=>m.pacienteId===mapaCorporalPacienteId);
+  if(idx>=0) lista[idx]=mapaCorporalData; else lista.push(mapaCorporalData);
+  await saveList('mapasCorporais',lista);
+  await registrarAuditoria('Atualizou mapa corporal',mapaCorporalPacienteNome);
+  showToast('Mapa corporal salvo.','ok');
 }
 async function anonimizarPaciente(id){
   if(!confirm('Isso substitui nome, telefone e observações por dados anônimos (irreversível), mantendo o histórico financeiro/estatístico. Confirma?')) return;
@@ -2624,9 +2774,9 @@ async function renderConfigMarca(){
         </div>
         <div class="field"><label>Especialidade principal</label>
           <select id="cfgEspecialidade">
-            ${['Clínico geral','Odontologia','Psicologia','Outra'].map(e=>`<option value="${e}" ${cfg.especialidade===e?'selected':''}>${e}</option>`).join('')}
+            ${['Clínico geral','Odontologia','Psicologia','Fisioterapia','Nutrição','Dermatologia','Outra'].map(e=>`<option value="${e}" ${cfg.especialidade===e?'selected':''}>${e}</option>`).join('')}
           </select>
-          <p style="font-size:11.5px;color:var(--gray);margin:4px 0 0">Define o que aparece no prontuário (odontograma pra Odontologia, sigilo reforçado pra Psicologia) e os modelos de anamnese sugeridos.</p>
+          <p style="font-size:11.5px;color:var(--gray);margin:4px 0 0">Cada especialidade libera um recurso próprio no prontuário: odontograma (Odontologia), pacote de sessões (Psicologia), gráfico de dor/amplitude (Fisioterapia), peso/IMC (Nutrição) e mapa corporal de lesões (Dermatologia).</p>
         </div>
         ${cfg.logo?`<div style="margin-bottom:10px"><img src="${cfg.logo}" style="height:44px;border-radius:8px;border:1px solid var(--line)"><button class="btn sm" style="margin-left:10px" onclick="removerLogo()">Remover logo</button></div>`:''}
         <button class="btn primary" onclick="salvarMarca()">Salvar marca</button>
@@ -2845,6 +2995,33 @@ function lerImagemBase64(file){
     r.readAsDataURL(file);
   });
 }
+function comprimirImagemLogo(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      const maxLado=480;
+      let w=img.width, h=img.height;
+      if(w>h && w>maxLado){ h=Math.round(h*maxLado/w); w=maxLado; }
+      else if(h>=w && h>maxLado){ w=Math.round(w*maxLado/h); h=maxLado; }
+      const canvas=document.createElement('canvas');
+      canvas.width=w; canvas.height=h;
+      const ctx=canvas.getContext('2d');
+      ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,w,h);
+      ctx.drawImage(img,0,0,w,h);
+      let qualidade=0.9, dataUrl=canvas.toDataURL('image/jpeg',qualidade);
+      const alvoBytes=350*1024;
+      while(dataUrl.length*0.75>alvoBytes && qualidade>0.35){
+        qualidade-=0.1;
+        dataUrl=canvas.toDataURL('image/jpeg',qualidade);
+      }
+      resolve(dataUrl);
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('Não consegui abrir essa imagem.')); };
+    img.src=url;
+  });
+}
 async function salvarMarca(){
   const cfg=await loadConfigClinica();
   cfg.nomeExibicao=$('cfgNomeExib').value.trim();
@@ -2852,8 +3029,8 @@ async function salvarMarca(){
   cfg.especialidade=$('cfgEspecialidade')?$('cfgEspecialidade').value:cfg.especialidade;
   const file=$('cfgLogoFile').files[0];
   if(file){
-    if(file.size>800*1024){ showToast('Escolha uma imagem menor (até 800KB).','err'); return; }
-    try{ cfg.logo=await lerImagemBase64(file); }catch(e){ showToast('Não consegui ler essa imagem.','err'); return; }
+    try{ cfg.logo=await comprimirImagemLogo(file); }
+    catch(e){ showToast('Não consegui processar essa imagem.','err'); return; }
   }
   await store.set('clinica:config',JSON.stringify(cfg));
   await syncClinicaPublica(cfg);
