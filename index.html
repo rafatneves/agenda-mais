@@ -278,7 +278,7 @@ a{color:var(--teal)}
     <div class="sbClinic" id="sbClinicName">clínica</div>
     <button class="navItem" data-tab="dashboard" onclick="goTab('dashboard')"><span class="ic">◆</span>Painel</button>
     <button class="navItem" data-tab="agenda" onclick="goTab('agenda')"><span class="ic">▤</span>Agenda</button>
-    <button class="navItem" data-tab="pacientes" onclick="goTab('pacientes')"><span class="ic">☺</span>Pacientes</button>
+    <button class="navItem" data-tab="pacientes" onclick="goTab('pacientes')"><span class="ic">◎</span>Pacientes</button>
     <button class="navItem" data-tab="convenios" onclick="goTab('convenios')"><span class="ic">✚</span>Convênios</button>
     <button class="navItem" data-tab="financeiro" onclick="goTab('financeiro')"><span class="ic">$</span>Financeiro</button>
     <button class="navItem" data-tab="estoque" onclick="goTab('estoque')"><span class="ic">▦</span>Estoque</button>
@@ -318,9 +318,12 @@ create table if not exists workspace_members(user_id uuid references auth.users(
 alter table workspace_members enable row level security;
 alter table workspace_members add column if not exists email text;
 -- perfis aceitos: 'admin' (tudo), 'profissional' (agenda+prontuário+procedimentos), 'recepcao' (agenda+pacientes+estoque+marketing, sem prontuário clínico), 'financeiro' (financeiro+convênios+relatórios)
-create policy wm_admin_select_all on workspace_members for select using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
-create policy wm_admin_update on workspace_members for update using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin')) with check (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
-create policy wm_admin_delete on workspace_members for delete using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+create or replace function public.is_admin_of(grp_check text) returns boolean language sql security definer set search_path = public stable as $$
+  select exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role='admin');
+$$;
+create policy wm_admin_select_all on workspace_members for select using (is_admin_of(grp));
+create policy wm_admin_update on workspace_members for update using (is_admin_of(grp)) with check (is_admin_of(grp));
+create policy wm_admin_delete on workspace_members for delete using (is_admin_of(grp));
 create table if not exists clinicas(grp text primary key, nome text not null, logo text, cor text, created_at timestamptz default now());
 alter table clinicas enable row level security;
 
@@ -359,6 +362,9 @@ alter table solicitacoes_publicas enable row level security;
 create table if not exists portais_paciente(token text primary key, grp text not null, paciente_id text not null, dados jsonb not null, expira_em timestamptz, created_at timestamptz default now());
 alter table portais_paciente enable row level security;
 
+create or replace function public.is_admin_of(grp_check text) returns boolean language sql security definer set search_path = public stable as $func$
+  select exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role='admin');
+$func$;
 do $$ begin
   if not exists (select 1 from pg_policies where tablename='painel' and policyname='painel_rw') then
     create policy painel_rw on painel for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
@@ -370,13 +376,13 @@ do $$ begin
     create policy wm_own_insert on workspace_members for insert with check (user_id=auth.uid());
   end if;
   if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_select_all') then
-    create policy wm_admin_select_all on workspace_members for select using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+    create policy wm_admin_select_all on workspace_members for select using (is_admin_of(grp));
   end if;
   if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_update') then
-    create policy wm_admin_update on workspace_members for update using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin')) with check (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+    create policy wm_admin_update on workspace_members for update using (is_admin_of(grp)) with check (is_admin_of(grp));
   end if;
   if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_admin_delete') then
-    create policy wm_admin_delete on workspace_members for delete using (grp in (select grp from workspace_members m2 where m2.user_id=auth.uid() and m2.role='admin'));
+    create policy wm_admin_delete on workspace_members for delete using (is_admin_of(grp));
   end if;
   if not exists (select 1 from pg_policies where tablename='clinicas' and policyname='clinicas_select_public') then
     create policy clinicas_select_public on clinicas for select using (true);
@@ -1094,6 +1100,38 @@ async function renderPacientes(){
   [pacientesData,conveniosData]=await Promise.all([loadList('pacientes'),loadList('convenios')]);
   pintarPacientes();
 }
+async function pintarAssinaturasPendentes(){
+  const el=$('painelAssinaturasPendentes'); if(!el) return;
+  const solicitacoes=(await loadSolicitacoes('consentimento_lgpd')).filter(s=>s.status!=='aprovado');
+  if(!solicitacoes.length){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="panel" style="margin-bottom:16px">
+    <div class="panelHead"><h2>Assinaturas recebidas — aguardando aprovação</h2><span class="tag">${solicitacoes.length}</span></div>
+    ${solicitacoes.map(s=>{
+      const p=pacientesData.find(x=>x.id===s.payload.pacienteId);
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line-soft)">
+        <img src="${s.payload.assinaturaData}" style="width:100px;height:44px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">
+        <div style="flex:1">
+          <b style="font-size:13.5px">${s.payload.nome}</b>${p?'':' <span class="badge faltou">Paciente não encontrado</span>'}
+          <div style="font-size:12px;color:var(--ink-soft)">Assinado em ${fmtDataHora(s.payload.dataHora)}${p?' · para: '+p.nome:''}</div>
+        </div>
+        ${p?`<button class="btn sm primary" onclick="aprovarConsentimentoPublico('${s.id}')">Aprovar</button>`:''}
+        <button class="iconBtn" onclick="excluirSolicitacao('${s.id}');pintarAssinaturasPendentes()">🗑</button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+async function aprovarConsentimentoPublico(solicitacaoId){
+  const solicitacoes=await loadSolicitacoes('consentimento_lgpd');
+  const s=solicitacoes.find(x=>x.id===solicitacaoId); if(!s) return;
+  const p=pacientesData.find(x=>x.id===s.payload.pacienteId);
+  if(!p){ showToast('Paciente não encontrado — pode ter sido excluído.','err'); return; }
+  p.consentimentoLgpdEm=s.payload.dataHora; p.consentimentoNome=s.payload.nome; p.consentimentoAssinatura=s.payload.assinaturaData;
+  await saveList('pacientes',pacientesData);
+  await atualizarSolicitacao(solicitacaoId,'aprovado');
+  await registrarAuditoria('Aprovou consentimento LGPD assinado remotamente',p.nome);
+  showToast('Consentimento aprovado e aplicado ao paciente.','ok');
+  pintarPacientes();
+}
 function exportarPacientesCSV(){
   exportarCSV('pacientes.csv',[
     {titulo:'Nome',campo:'nome'},{titulo:'Telefone',campo:'telefone'},{titulo:'CPF',campo:'cpf'},{titulo:'E-mail',campo:'email'},
@@ -1169,6 +1207,7 @@ function pintarPacientes(){
   const q=pacientesBusca.toLowerCase();
   const lista=pacientesData.filter(p=>!q||p.nome.toLowerCase().includes(q)||soDigitos(p.telefone).includes(soDigitos(q)));
   $('content').innerHTML=`
+    <div id="painelAssinaturasPendentes"></div>
     <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${pacientesBusca}"></div>
     <div class="panel">
       ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th>Convênio</th><th>LGPD</th><th></th></tr></thead><tbody>
@@ -1181,6 +1220,7 @@ function pintarPacientes(){
         }).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum paciente ainda</div>Cadastre o primeiro paciente pra começar a usar a agenda.</div>`}
     </div>`;
+  pintarAssinaturasPendentes();
 }
 async function abrirModalPaciente(id){
   const p=id?pacientesData.find(x=>x.id===id):null;
@@ -1249,6 +1289,13 @@ function renderConsentimentoBox(p,cfg){
   const termo=cfg.termoLgpd||'Autorizo o tratamento dos meus dados pessoais e de saúde por esta clínica, exclusivamente para fins de agendamento, atendimento clínico, financeiro e comunicação sobre minhas consultas, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).';
   return `<div class="card" style="background:var(--paper2);border:none;padding:12px">
     <div style="font-weight:600;font-size:13px;margin-bottom:6px">Consentimento LGPD (dado de saúde)</div>
+    <div style="background:var(--teal-soft);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:12.5px;color:var(--teal);font-weight:600">Prefere que o próprio paciente assine?</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Manda um link — ele assina pelo celular dele, sem precisar de login. A assinatura fica pendente de aprovação sua antes de valer.</div>
+      <button class="btn sm" onclick="enviarLinkConsentimentoEmail('${p.id}')">✉ Enviar por e-mail</button>
+      <button class="btn sm" onclick="copiarLinkConsentimento('${p.id}')">🔗 Copiar link</button>
+    </div>
+    <div style="font-size:12px;color:var(--gray);margin-bottom:8px">— ou registre aqui mesmo, presencialmente —</div>
     <textarea readonly rows="4" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink-soft)">${termo}</textarea>
     <div class="field" style="margin-top:10px"><label>Nome de quem autorizou (paciente ou responsável)</label><input id="consNome" placeholder="Nome completo" value="${p.nome}"></div>
     <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-bottom:8px">
@@ -2128,11 +2175,13 @@ function renderModalProcedimento(id){
   const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
   const margem=Number(procDraft.margem||0);
   const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
+  const precoManual=Number(procDraft.precoManual||0);
+  const precoFinal = precoManual>0 ? precoManual : sugerido;
   openModal(`
     <div class="modalHead"><h3>${id?'Editar procedimento':'Novo procedimento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele" value="${procDraft.nome||''}" onchange="procDraft.nome=this.value"></div>
-      <div class="field"><label>Insumos consumidos</label>
+      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele, Consulta de rotina…" value="${procDraft.nome||''}" onchange="procDraft.nome=this.value"></div>
+      <div class="field"><label>Insumos consumidos (deixe vazio se a consulta não usa material)</label>
         <div id="prItensList">${procItensTemp.map((it,idx)=>{
           const e=procEstoque.find(x=>x.id===it.estoqueId);
           return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
@@ -2140,7 +2189,7 @@ function renderModalProcedimento(id){
             <span class="mono" style="font-size:12px;color:var(--ink-soft)">${it.qtd} ${e?e.unidade||'':''}</span>
             <button class="iconBtn" onclick="removerItemProc(${idx},'${id||''}')">🗑</button>
           </div>`;
-        }).join('') || '<p style="font-size:12.5px;color:var(--gray)">Nenhum insumo adicionado ainda.</p>'}</div>
+        }).join('') || '<p style="font-size:12.5px;color:var(--gray)">Nenhum insumo — tudo bem, nem toda consulta usa material.</p>'}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <select id="prItemSel" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--paper)">
             ${procEstoque.map(e=>`<option value="${e.id}">${e.nome} (${BRL(e.custoUnitario||0)}/${e.unidade||'un'})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
@@ -2151,12 +2200,13 @@ function renderModalProcedimento(id){
       </div>
       <div class="formRow">
         <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" id="prMargem" value="${margem}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
-        <div class="field"><label>Preço manual (opcional, sobrepõe o sugerido)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" onchange="procDraft.precoManual=this.value"></div>
+        <div class="field"><label>Preço da consulta (opcional — preenche direto se não tiver insumo)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" oninput="procDraft.precoManual=this.value;atualizarPrecoModal()" placeholder="Ex: 200"></div>
       </div>
       <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${procDraft.comissaoPct||''}" placeholder="Ex: 30"></div>
       <div class="card" style="background:var(--teal-soft);border:none">
         <div style="display:flex;justify-content:space-between;font-size:13px"><span>Custo dos insumos</span><b class="mono" id="prCustoView">${BRL(custo)}</b></div>
-        <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Preço sugerido</span><b class="mono" id="prSugeridoView" style="color:var(--teal)">${BRL(sugerido)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:2px;color:var(--ink-soft)"><span>Preço sugerido (pela margem)</span><b class="mono" id="prSugeridoView">${BRL(sugerido)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:6px;border-top:1px solid #ffffff80;padding-top:6px"><span><b>Preço final</b></span><b class="mono" id="prFinalView" style="color:var(--teal)">${BRL(precoFinal)}</b></div>
       </div>
     </div>
     <div class="modalFoot">
@@ -2181,7 +2231,9 @@ function atualizarPrecoModal(){
   const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
   const margem=Number($('prMargem').value||0);
   const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
-  $('prCustoView').textContent=BRL(custo); $('prSugeridoView').textContent=BRL(sugerido);
+  const precoManual=Number($('prPrecoManual').value||0);
+  const precoFinal = precoManual>0 ? precoManual : sugerido;
+  $('prCustoView').textContent=BRL(custo); $('prSugeridoView').textContent=BRL(sugerido); $('prFinalView').textContent=BRL(precoFinal);
 }
 async function salvarProcedimento(id){
   const nome=$('prNome').value.trim();
@@ -2526,6 +2578,7 @@ async function initPublicRoute(){
   if(pub==='agendar') await renderPublicoAgendar(codigo);
   else if(pub==='avaliar') await renderPublicoAvaliar(codigo,params.get('id')||'');
   else if(pub==='portal') await renderPublicoPortal(params.get('token')||'');
+  else if(pub==='consentir') await renderPublicoConsentir(params.get('token')||'');
   else el.innerHTML=publicoShell('Link inválido','Confira o endereço com a clínica.');
   return true;
 }
@@ -2652,7 +2705,70 @@ async function renderPublicoPortal(token){
     ${(d.historico||[]).length?`<table class="tbl"><tbody>${d.historico.map(a=>`<tr><td>${fmtData(a.data)}</td><td>${a.tipo||'—'}</td><td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td></tr>`).join('')}</tbody></table>`:'<p style="font-size:13px;color:var(--ink-soft)">Sem histórico ainda.</p>'}
   `,cli&&cli.nome,cli&&cli.logo);
 }
-/* ---- Pesquisa de satisfação (NPS) pós-consulta ---- */
+/* ---- Assinatura pública do consentimento LGPD ---- */
+async function renderPublicoConsentir(token){
+  const el=document.getElementById('publico');
+  if(!token){ el.innerHTML=publicoShell('Link inválido','Peça um novo link à clínica.'); return; }
+  const registro=await lerPortalPaciente(token);
+  if(!registro||!registro.dados||registro.dados.tipo!=='consentimento'){ el.innerHTML=publicoShell('Link expirado ou inválido','Peça um novo link de assinatura à clínica.'); return; }
+  const cli=await dadosClinicaPublica(registro.grp);
+  if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
+  const d=registro.dados;
+  el.innerHTML=publicoShell('Confirmar autorização (LGPD)',`
+    <p class="gateTitle" style="margin-bottom:10px">Olá, ${d.pacienteNome}. Leia o termo abaixo e assine pra autorizar o uso dos seus dados de saúde por ${d.clinicaNome||'esta clínica'}.</p>
+    <textarea readonly rows="5" class="gateInp" style="font-size:12.5px;color:var(--ink-soft);resize:none">${d.termo}</textarea>
+    <label class="gateLab" style="margin-top:14px">Seu nome completo</label>
+    <input class="gateInp" id="pcNome" value="${d.pacienteNome}">
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin:12px 0">
+      <input type="checkbox" id="pcCheck" style="width:auto;margin-top:2px"> Li e concordo com o termo acima.
+    </label>
+    <label class="gateLab">Assinatura (desenhe com o dedo)</label>
+    <canvas id="assinaturaCanvas" style="width:100%;height:150px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;display:block"></canvas>
+    <button class="btn sm" style="margin-top:8px" onclick="limparAssinatura()">Limpar</button>
+    <button class="gateBtn" style="margin-top:14px" onclick="enviarConsentimentoPublico('${registro.grp}','${registro.paciente_id}',${JSON.stringify(token)})">Confirmar autorização</button>
+    <div class="gateError" id="pcErr"></div>
+    <div id="pcOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Assinatura enviada! A clínica confirma o recebimento em breve.</div>
+  `,cli&&cli.nome,cli&&cli.logo);
+  setTimeout(initAssinaturaCanvas,0);
+}
+async function enviarConsentimentoPublico(grp,pacienteId,token){
+  const err=$('pcErr'); err.style.display='none';
+  const nome=$('pcNome').value.trim();
+  if(!nome){ err.textContent='Digite seu nome completo.'; err.style.display='block'; return; }
+  if(!$('pcCheck').checked){ err.textContent='Confirme que leu e concorda com o termo.'; err.style.display='block'; return; }
+  if(!assinaturaTemTraco){ err.textContent='Assine no campo acima antes de confirmar.'; err.style.display='block'; return; }
+  const cv=$('assinaturaCanvas');
+  const r=await publicInsert(grp,'consentimento_lgpd',{pacienteId,nome,assinaturaData:cv.toDataURL('image/png'),dataHora:new Date().toISOString()});
+  if(!r.ok){ err.textContent='Não consegui enviar agora. Tente de novo em instantes.'; err.style.display='block'; return; }
+  document.querySelectorAll('#publico .gateInp,#publico .gateBtn,#publico canvas,#publico label').forEach(e=>e.style.display='none');
+  $('pcOk').style.display='block';
+}
+async function gerarLinkConsentimento(pacienteId,pacienteNome){
+  if(demoMode||!sb){ showToast('Isso precisa do Supabase conectado.','err'); return; }
+  const cfg=await loadConfigClinica();
+  const termo=cfg.termoLgpd||'Autorizo o tratamento dos meus dados pessoais e de saúde por esta clínica, exclusivamente para fins de agendamento, atendimento clínico, financeiro e comunicação sobre minhas consultas, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).';
+  const token=await publicarPortalPaciente(pacienteId,{tipo:'consentimento',pacienteNome,clinicaNome:cfg.nomeExibicao||clinicaNome,termo},15);
+  const url=new URL(location.href); url.search=''; url.searchParams.set('public','consentir'); url.searchParams.set('token',token);
+  return url.toString();
+}
+async function enviarLinkConsentimentoEmail(pacienteId){
+  const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
+  if(!p.email){ showToast('Este paciente não tem e-mail cadastrado. Cadastre ou copie o link manualmente.','err'); return; }
+  const link=await gerarLinkConsentimento(pacienteId,p.nome);
+  if(!link) return;
+  const assunto=encodeURIComponent('Autorização de dados — '+(clinicaNome||'Agenda+'));
+  const corpo=encodeURIComponent(`Olá, ${p.nome}!\n\nPara continuarmos seu atendimento, por favor confirme a autorização de uso dos seus dados de saúde (LGPD) através do link abaixo:\n\n${link}\n\nLeva menos de um minuto.\n\nObrigado!`);
+  window.open(`mailto:${p.email}?subject=${assunto}&body=${corpo}`,'_blank');
+  await registrarAuditoria('Gerou link de assinatura LGPD (e-mail)',p.nome);
+}
+async function copiarLinkConsentimento(pacienteId){
+  const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
+  const link=await gerarLinkConsentimento(pacienteId,p.nome);
+  if(!link) return;
+  copiarTexto(link);
+  await registrarAuditoria('Gerou link de assinatura LGPD (copiado)',p.nome);
+  showToast('Link copiado — mande por WhatsApp, e-mail ou onde preferir.','ok');
+}
 async function renderPublicoAvaliar(codigo,agendamentoId){
   const el=document.getElementById('publico');
   if(!codigo){ el.innerHTML=publicoShell('Link inválido','Peça um novo link à clínica.'); return; }
