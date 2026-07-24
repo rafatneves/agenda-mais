@@ -327,12 +327,36 @@ create policy wm_admin_delete on workspace_members for delete using (is_admin_of
 create table if not exists clinicas(grp text primary key, nome text not null, logo text, cor text, created_at timestamptz default now());
 alter table clinicas enable row level security;
 
-create policy painel_rw on painel for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+-- IMPORTANTE (chave/valor com sigilo por perfil): "painel" guarda tudo (agenda, pacientes, prontuário,
+-- financeiro...) numa tabela genérica grp/k/value. Uma policy só por "grp" deixaria qualquer usuário
+-- da clínica ler/escrever QUALQUER chave, inclusive prontuário e financeiro, direto pela API — mesmo
+-- que a tela (podeVerProntuario() etc.) esconda o botão. pode_acessar_chave() fecha isso no banco.
+create or replace function public.pode_acessar_chave(grp_check text, k_check text) returns boolean language sql security definer set search_path = public stable as $$
+  select
+    k_check not in ('evolucoes','anamneseModelos','odontogramas','pacotesSessoes','mapasCorporais','lancamentos','contas','planosRecorrentes','convenios','tabelaConvenio','guias')
+    or (k_check in ('evolucoes','anamneseModelos','odontogramas','pacotesSessoes','mapasCorporais') and exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role in ('admin','profissional')))
+    or (k_check in ('lancamentos','contas','planosRecorrentes','convenios','tabelaConvenio','guias') and exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role in ('admin','financeiro')));
+$$;
+drop policy if exists painel_rw on painel;
+create policy painel_rw on painel for all
+  using (grp in (select grp from workspace_members where user_id=auth.uid()) and pode_acessar_chave(grp,k))
+  with check (grp in (select grp from workspace_members where user_id=auth.uid()) and pode_acessar_chave(grp,k));
 create policy wm_own_select on workspace_members for select using (user_id=auth.uid());
 create policy wm_own_insert on workspace_members for insert with check (user_id=auth.uid());
 create policy clinicas_select_public on clinicas for select using (true);
 create policy clinicas_insert_auth on clinicas for insert with check (auth.uid() is not null);
 create policy clinicas_update_members on clinicas for update using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
+
+-- Horários ocupados: função pública (sem login) que devolve só a lista de horários já marcados num
+-- dia, pra tela de agendamento online bloquear escolher um horário que já tem gente marcada. Não
+-- expõe nome/telefone/paciente nenhum — só a hora. Roda com privilégio elevado (security definer)
+-- de propósito, senão a página pública não enxergaria a agenda (que é protegida por RLS).
+create or replace function public.horarios_ocupados_publicos(codigo_grp text, dia date) returns text[] language sql security definer set search_path = public stable as $$
+  select coalesce(array_agg(distinct item->>'hora'), array[]::text[])
+  from painel, jsonb_array_elements(coalesce(value,'[]'::jsonb)) as item
+  where grp=codigo_grp and k='agendamentos' and (item->>'data')=dia::text and coalesce(item->>'status','')<>'cancelado';
+$$;
+grant execute on function public.horarios_ocupados_publicos(text,date) to anon, authenticated;
 
 -- Tabela única pra tudo que vem de gente SEM login (agendamento online, pesquisa de satisfação/NPS):
 -- fica separada da tabela "painel" de propósito, pra não precisar afrouxar a RLS de dados internos da clínica.
@@ -365,10 +389,23 @@ alter table portais_paciente enable row level security;
 create or replace function public.is_admin_of(grp_check text) returns boolean language sql security definer set search_path = public stable as $func$
   select exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role='admin');
 $func$;
+create or replace function public.pode_acessar_chave(grp_check text, k_check text) returns boolean language sql security definer set search_path = public stable as $chave$
+  select
+    k_check not in ('evolucoes','anamneseModelos','odontogramas','pacotesSessoes','mapasCorporais','lancamentos','contas','planosRecorrentes','convenios','tabelaConvenio','guias')
+    or (k_check in ('evolucoes','anamneseModelos','odontogramas','pacotesSessoes','mapasCorporais') and exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role in ('admin','profissional')))
+    or (k_check in ('lancamentos','contas','planosRecorrentes','convenios','tabelaConvenio','guias') and exists(select 1 from workspace_members where user_id=auth.uid() and grp=grp_check and role in ('admin','financeiro')));
+$chave$;
+drop policy if exists painel_rw on painel;
+create policy painel_rw on painel for all
+  using (grp in (select grp from workspace_members where user_id=auth.uid()) and pode_acessar_chave(grp,k))
+  with check (grp in (select grp from workspace_members where user_id=auth.uid()) and pode_acessar_chave(grp,k));
+create or replace function public.horarios_ocupados_publicos(codigo_grp text, dia date) returns text[] language sql security definer set search_path = public stable as $horarios$
+  select coalesce(array_agg(distinct item->>'hora'), array[]::text[])
+  from painel, jsonb_array_elements(coalesce(value,'[]'::jsonb)) as item
+  where grp=codigo_grp and k='agendamentos' and (item->>'data')=dia::text and coalesce(item->>'status','')<>'cancelado';
+$horarios$;
+grant execute on function public.horarios_ocupados_publicos(text,date) to anon, authenticated;
 do $$ begin
-  if not exists (select 1 from pg_policies where tablename='painel' and policyname='painel_rw') then
-    create policy painel_rw on painel for all using (grp in (select grp from workspace_members where user_id=auth.uid())) with check (grp in (select grp from workspace_members where user_id=auth.uid()));
-  end if;
   if not exists (select 1 from pg_policies where tablename='workspace_members' and policyname='wm_own_select') then
     create policy wm_own_select on workspace_members for select using (user_id=auth.uid());
   end if;
@@ -687,7 +724,38 @@ async function saveList(k,arr){ await store.set(k,JSON.stringify(arr)); }
 /* ================= UTILS ================= */
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function $(id){ return document.getElementById(id); }
+/* Escape central de HTML: TODO texto vindo de paciente/usuário (inclusive formulário público sem
+   login) precisa passar por aqui antes de entrar em innerHTML/template string. Sem isso, um nome de
+   paciente como "<img src=x onerror=...>" executa no navegador de quem abrir a tela. */
+function escHtml(v){
+  if(v===null||v===undefined) return '';
+  return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+/* Uso: onclick="minhaFuncao('${escJsAttr(valorLivre)}')" — quando o texto do usuário vira argumento
+   dentro de um onclick inline. Escapa primeiro pro contexto de string JS (aspas simples/barra) e
+   depois pro contexto de atributo HTML, porque as duas camadas existem ao mesmo tempo aqui. */
+function escJsAttr(v){
+  if(v===null||v===undefined) return '';
+  return escHtml(String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+}
 function BRL(n){ return (Number(n)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+/* ---- Precificação de procedimento: função única usada em Agenda, Procedimentos e Relatórios ----
+   (antes cada tela reimplementava essa conta separadamente e ficava fácil elas divergirem).
+   Regra: "Preço da consulta" é o honorário; se o procedimento tem insumo, o custo do insumo é somado
+   a ele. Sem preço manual, cai no preço sugerido pelo custo do insumo + margem desejada. */
+function custoInsumosProcedimento(p,estoqueList){
+  return (p.itens||[]).reduce((s,it)=>{ const e=(estoqueList||[]).find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+}
+function precoSugeridoProcedimento(custo,margem){
+  const m=Number(margem||0);
+  return (m>0&&m<100) ? custo/(1-m/100) : custo;
+}
+function precoFinalProcedimento(p,estoqueList){
+  const custo=custoInsumosProcedimento(p,estoqueList);
+  const sugerido=precoSugeridoProcedimento(custo,p.margem);
+  const manual=Number(p.precoManual||0);
+  return manual>0 ? (manual+custo) : sugerido;
+}
 function fmtData(iso){ if(!iso) return ''; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('pt-BR'); }
 function fmtDataHora(iso){ const d=new Date(iso); return d.toLocaleDateString('pt-BR')+' '+d.toTimeString().slice(0,5); }
 function hojeISO(){ return new Date().toISOString().slice(0,10); }
@@ -778,8 +846,16 @@ function goTab(tab){
 /* ================= DASHBOARD ================= */
 async function renderDashboard(){
   $('content').innerHTML='<div class="empty">Carregando…</div>';
+  /* Recepção/profissional não têm acesso a financeiro (nem no banco, ver painel_rw) — nem tenta
+     buscar 'lancamentos'/'contas' pra esses perfis. Antes o dashboard buscava pra todo mundo e,
+     como a leitura vinha vazia por causa da RLS, mostrava "0 contas atrasadas" de um jeito que
+     parecia dizer que estava tudo certo, quando na verdade o dado só estava escondido. */
+  const vePainelFinanceiro=(meuPerfil==='admin'||meuPerfil==='financeiro');
   const [agendamentos,lancamentos,estoque,pacientes,contas]=await Promise.all([
-    loadList('agendamentos'),loadList('lancamentos'),loadList('estoque'),loadList('pacientes'),loadList('contas')
+    loadList('agendamentos'),
+    vePainelFinanceiro?loadList('lancamentos'):Promise.resolve([]),
+    loadList('estoque'),loadList('pacientes'),
+    vePainelFinanceiro?loadList('contas'):Promise.resolve([])
   ]);
   const hoje=hojeISO();
   const mesAtual=hoje.slice(0,7);
@@ -796,11 +872,11 @@ async function renderDashboard(){
   const lembretesPendentes=hojeAgend.filter(a=>a.telefone && !a.lembreteStatus);
 
   $('content').innerHTML=`
-    ${contasAtrasadas.length?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+    ${vePainelFinanceiro&&contasAtrasadas.length?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:13.5px;color:var(--coral)"><b>${contasAtrasadas.length} conta(s) atrasada(s)</b> — total de ${BRL(contasAtrasadas.reduce((s,c)=>s+Number(c.valor||0),0))}</span>
       <button class="btn sm" onclick="goTab('financeiro')">Ver contas</button>
     </div>`:''}
-    ${(lembretesPendentes.length||contasVencendoEmBreve.length||baixoEstoque.length)?`
+    ${(lembretesPendentes.length||(vePainelFinanceiro&&contasVencendoEmBreve.length)||baixoEstoque.length)?`
     <div class="panel" style="margin-bottom:16px">
       <div class="panelHead"><h2>O que falta fazer hoje</h2></div>
       <div style="padding:6px 18px 16px;display:flex;flex-direction:column;gap:10px">
@@ -808,7 +884,7 @@ async function renderDashboard(){
           <span style="font-size:13.5px">📤 <b>${lembretesPendentes.length}</b> lembrete(s) de hoje ainda não enviado(s)</span>
           <button class="btn sm" onclick="goTab('agenda')">Ver agenda</button>
         </div>`:''}
-        ${contasVencendoEmBreve.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        ${vePainelFinanceiro&&contasVencendoEmBreve.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
           <span style="font-size:13.5px">📅 <b>${contasVencendoEmBreve.length}</b> conta(s) vencendo nos próximos 7 dias — ${BRL(contasVencendoEmBreve.reduce((s,c)=>s+Number(c.valor||0),0))}</span>
           <button class="btn sm" onclick="goTab('financeiro')">Ver contas</button>
         </div>`:''}
@@ -818,24 +894,26 @@ async function renderDashboard(){
         </div>`:''}
       </div>
     </div>`:''}
-    <div class="grid cards4">
+    ${vePainelFinanceiro?`<div class="grid cards4">
       <div class="card kpi"><div class="lbl">Consultas hoje</div><div class="val">${hojeAgend.length}</div><div class="sub">${pacientes.length} pacientes cadastrados</div></div>
       <div class="card kpi"><div class="lbl">Receita do mês</div><div class="val">${BRL(receitaMes)}</div><div class="sub">até ${fmtData(hoje)}</div></div>
       <div class="card kpi"><div class="lbl">Despesas do mês</div><div class="val">${BRL(despesaMes)}</div><div class="sub">materiais, contas, etc.</div></div>
       <div class="card kpi"><div class="lbl">Lucro do mês</div><div class="val" style="color:${lucroMes>=0?'var(--teal)':'var(--coral)'}">${BRL(lucroMes)}</div><div class="sub">receita − despesas</div></div>
-    </div>
+    </div>`:`<div style="max-width:220px">
+      <div class="card kpi"><div class="lbl">Consultas hoje</div><div class="val">${hojeAgend.length}</div><div class="sub">${pacientes.length} pacientes cadastrados</div></div>
+    </div>`}
 
     <div class="grid" style="grid-template-columns:1.4fr 1fr;margin-top:16px" id="dashBottom">
       <div class="panel">
         <div class="panelHead"><h2>Hoje na agenda</h2><button class="btn sm" onclick="goTab('agenda')">Ver agenda</button></div>
         ${hojeAgend.length? `<table class="tbl"><thead><tr><th>Horário</th><th>Paciente</th><th>Profissional</th><th>Status</th></tr></thead><tbody>
-          ${hojeAgend.sort((a,b)=>a.hora.localeCompare(b.hora)).map(a=>`<tr><td class="mono">${a.hora}</td><td>${a.pacienteNome}</td><td>${a.profissional||'—'}</td><td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td></tr>`).join('')}
+          ${hojeAgend.sort((a,b)=>a.hora.localeCompare(b.hora)).map(a=>`<tr><td class="mono">${escHtml(a.hora)}</td><td>${escHtml(a.pacienteNome)}</td><td>${escHtml(a.profissional)||'—'}</td><td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td></tr>`).join('')}
         </tbody></table>` : `<div class="empty"><div class="big">Nada marcado pra hoje</div>Aproveite pra revisar a agenda da semana.</div>`}
       </div>
       <div class="panel">
         <div class="panelHead"><h2>Estoque baixo</h2><button class="btn sm" onclick="goTab('estoque')">Ver estoque</button></div>
         ${baixoEstoque.length? `<table class="tbl"><thead><tr><th>Item</th><th>Qtd.</th></tr></thead><tbody>
-          ${baixoEstoque.map(i=>`<tr><td>${i.nome}</td><td class="stockLow">${i.qtd} ${i.unidade||''}</td></tr>`).join('')}
+          ${baixoEstoque.map(i=>`<tr><td>${escHtml(i.nome)}</td><td class="stockLow">${escHtml(i.qtd)} ${escHtml(i.unidade||'')}</td></tr>`).join('')}
         </tbody></table>` : `<div class="empty"><div class="big">Tudo certo</div>Nenhum item abaixo do mínimo.</div>`}
       </div>
     </div>
@@ -848,13 +926,8 @@ function statusLabel(s){
 <script>
 /* ================= AGENDA ================= */
 let agendaData=[]; let agendaPacientes=[]; let agendaSelDia=hojeISO(); let agendaMesRef=new Date(); let agendaProcedimentos=[]; let agendaEstoque=[];
-function custoProcedimentoAgenda(p){
-  return (p.itens||[]).reduce((s,it)=>{ const e=agendaEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
-}
-function precoSugeridoAgenda(p){
-  const custo=custoProcedimentoAgenda(p); const m=Number(p.margem||0);
-  return (m>0&&m<100) ? custo/(1-m/100) : custo;
-}
+function custoProcedimentoAgenda(p){ return custoInsumosProcedimento(p,agendaEstoque); }
+function precoSugeridoAgenda(p){ return precoFinalProcedimento(p,agendaEstoque); }
 const HORA_INI=7, HORA_FIM=20;
 
 let agendaSubTab='calendario';
@@ -932,7 +1005,7 @@ async function marcarStatusRapido(id,novoStatus){
 function apptCardHTML(a){
   const lembreteIcon={enviado:'✅',aberto:'📤',falhou:'⚠️'}[a.lembreteStatus]||'';
   return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${a.id}')">
-    <div><div class="who">${a.pacienteNome}</div><div class="what">${a.tipo||'Consulta'}${a.profissional?' · '+a.profissional:''} · ${a.hora}${lembreteIcon?` <span title="Lembrete: ${a.lembreteStatus} em ${fmtDataHora(a.lembreteEm)}">${lembreteIcon}</span>`:''}</div></div>
+    <div><div class="who">${escHtml(a.pacienteNome)}</div><div class="what">${escHtml(a.tipo||'Consulta')}${a.profissional?' · '+escHtml(a.profissional):''} · ${escHtml(a.hora)}${lembreteIcon?` <span title="Lembrete: ${escHtml(a.lembreteStatus)} em ${fmtDataHora(a.lembreteEm)}">${lembreteIcon}</span>`:''}</div></div>
     <div class="apptActs">
       ${(a.status==='agendado'||a.status==='confirmado')?`<button class="iconBtn" title="Marcar atendido" onclick="event.stopPropagation();marcarStatusRapido('${a.id}','atendido')" style="font-size:17px">✓</button>`:''}
       <button class="iconBtn" title="Teleconsulta" onclick="event.stopPropagation();iniciarTeleconsulta('${a.id}')">🎥</button>
@@ -958,26 +1031,26 @@ function compartilharLinkTeleconsulta(id){
 }
 function abrirModalAgendamento(id){
   const a=id?agendaData.find(x=>x.id===id):null;
-  const pacOpts=agendaPacientes.map(p=>`<option value="${p.id}" ${a&&a.pacienteId===p.id?'selected':''}>${p.nome}</option>`).join('');
+  const pacOpts=agendaPacientes.map(p=>`<option value="${escHtml(p.id)}" ${a&&a.pacienteId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('');
   openModal(`
     <div class="modalHead"><h3>${a?'Editar agendamento':'Novo agendamento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
       <div class="field"><label>Paciente</label><select id="fPaciente">${pacOpts||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="formRow">
-        <div class="field"><label>Data</label><input type="date" id="fData" value="${a?a.data:agendaSelDia}"></div>
-        <div class="field"><label>Horário</label><input type="time" id="fHora" value="${a?a.hora:'09:00'}"></div>
+        <div class="field"><label>Data</label><input type="date" id="fData" value="${escHtml(a?a.data:agendaSelDia)}"></div>
+        <div class="field"><label>Horário</label><input type="time" id="fHora" value="${escHtml(a?a.hora:'09:00')}"></div>
       </div>
       <div class="formRow">
-        <div class="field"><label>Tipo</label><input id="fTipo" placeholder="Consulta, retorno, avaliação…" value="${a?a.tipo||'':''}"></div>
-        <div class="field"><label>Profissional</label><input id="fProf" placeholder="Dr(a)." value="${a?a.profissional||'':''}"></div>
+        <div class="field"><label>Tipo</label><input id="fTipo" placeholder="Consulta, retorno, avaliação…" value="${a?escHtml(a.tipo||''):''}"></div>
+        <div class="field"><label>Profissional</label><input id="fProf" placeholder="Dr(a)." value="${a?escHtml(a.profissional||''):''}"></div>
       </div>
       <div class="field"><label>Procedimento (opcional — baixa o estoque e lança o financeiro sozinho ao marcar "Atendido")</label>
         <select id="fProcedimento">
           <option value="">Nenhum / lançar manualmente</option>
-          ${agendaProcedimentos.map(p=>`<option value="${p.id}" ${a&&a.procedimentoId===p.id?'selected':''}>${p.nome} — ${BRL(p.precoManual||precoSugeridoAgenda(p))}</option>`).join('')}
+          ${agendaProcedimentos.map(p=>`<option value="${escHtml(p.id)}" ${a&&a.procedimentoId===p.id?'selected':''}>${escHtml(p.nome)} — ${BRL(precoSugeridoAgenda(p))}</option>`).join('')}
         </select>
       </div>
-      <div class="field"><label>Observações</label><textarea id="fObs" rows="2">${a?a.obs||'':''}</textarea></div>
+      <div class="field"><label>Observações</label><textarea id="fObs" rows="2">${a?escHtml(a.obs||''):''}</textarea></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px">
         <input type="checkbox" id="fTele" style="width:auto" ${a&&a.teleconsulta?'checked':''}> Teleconsulta (gera sala de vídeo automática)
       </label>
@@ -1043,7 +1116,7 @@ async function processarProcedimentoNaConsulta(a){
   });
   if(precisaSalvarEstoque) await saveList('estoque',agendaEstoque);
   const custo=custoProcedimentoAgenda(proc);
-  const preco=proc.precoManual||precoSugeridoAgenda(proc);
+  const preco=precoSugeridoAgenda(proc);
   const lanc=await loadList('lancamentos');
   lanc.push({id:uid(),tipo:'receita',valor:preco,descricao:proc.nome+' — '+a.pacienteNome,categoria:'Procedimento',data:a.data,natureza:'operacional',origem:'procedimento',agendamentoId:a.id});
   if(custo>0) lanc.push({id:uid(),tipo:'despesa',valor:custo,descricao:'Insumos: '+proc.nome+' — '+a.pacienteNome,categoria:'Insumos (CMV)',data:a.data,natureza:'cmv',origem:'procedimento',agendamentoId:a.id});
@@ -1108,14 +1181,15 @@ async function pintarAssinaturasPendentes(){
     <div class="panelHead"><h2>Assinaturas recebidas — aguardando aprovação</h2><span class="tag">${solicitacoes.length}</span></div>
     ${solicitacoes.map(s=>{
       const p=pacientesData.find(x=>x.id===s.payload.pacienteId);
+      const assinaturaOk=/^data:image\/(png|jpeg);base64,[a-zA-Z0-9+/=]+$/.test(s.payload.assinaturaData||'');
       return `<div style="display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line-soft)">
-        <img src="${s.payload.assinaturaData}" style="width:100px;height:44px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">
+        ${assinaturaOk?`<img src="${escHtml(s.payload.assinaturaData)}" style="width:100px;height:44px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">`:`<div style="width:100px;height:44px;border:1px solid var(--line);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gray)">assinatura inválida</div>`}
         <div style="flex:1">
-          <b style="font-size:13.5px">${s.payload.nome}</b>${p?'':' <span class="badge faltou">Paciente não encontrado</span>'}
-          <div style="font-size:12px;color:var(--ink-soft)">Assinado em ${fmtDataHora(s.payload.dataHora)}${p?' · para: '+p.nome:''}</div>
+          <b style="font-size:13.5px">${escHtml(s.payload.nome)}</b>${p?'':' <span class="badge faltou">Paciente não encontrado</span>'}
+          <div style="font-size:12px;color:var(--ink-soft)">Assinado em ${fmtDataHora(s.payload.dataHora)}${p?' · para: '+escHtml(p.nome):''}</div>
         </div>
-        ${p?`<button class="btn sm primary" onclick="aprovarConsentimentoPublico('${s.id}')">Aprovar</button>`:''}
-        <button class="iconBtn" onclick="excluirSolicitacao('${s.id}');pintarAssinaturasPendentes()">🗑</button>
+        ${p?`<button class="btn sm primary" onclick="aprovarConsentimentoPublico('${escJsAttr(s.id)}')">Aprovar</button>`:''}
+        <button class="iconBtn" onclick="excluirSolicitacao('${escJsAttr(s.id)}');pintarAssinaturasPendentes()">🗑</button>
       </div>`;
     }).join('')}
   </div>`;
@@ -1208,15 +1282,15 @@ function pintarPacientes(){
   const lista=pacientesData.filter(p=>!q||p.nome.toLowerCase().includes(q)||soDigitos(p.telefone).includes(soDigitos(q)));
   $('content').innerHTML=`
     <div id="painelAssinaturasPendentes"></div>
-    <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${pacientesBusca}"></div>
+    <div class="toolbar"><input class="search" placeholder="Buscar por nome ou telefone…" oninput="pacientesBusca=this.value;pintarPacientes()" value="${escHtml(pacientesBusca)}"></div>
     <div class="panel">
       ${lista.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Nascimento</th><th>Convênio</th><th>LGPD</th><th></th></tr></thead><tbody>
         ${lista.map(p=>{
           const conv=conveniosData.find(c=>c.id===p.convenioId);
-          return `<tr style="cursor:pointer" onclick="abrirModalPaciente('${p.id}')"><td>${p.nome}${p.alergias?` <span class="badge faltou" title="Alergias: ${p.alergias}">⚠ alergia</span>`:''}</td><td class="mono">${p.telefone||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
-          <td>${conv?conv.nome:'<span style="color:var(--gray)">Particular</span>'}</td>
+          return `<tr style="cursor:pointer" onclick="abrirModalPaciente('${escJsAttr(p.id)}')"><td>${escHtml(p.nome)}${p.alergias?` <span class="badge faltou" title="Alergias: ${escHtml(p.alergias)}">⚠ alergia</span>`:''}</td><td class="mono">${escHtml(p.telefone)||'—'}</td><td>${p.nascimento?fmtData(p.nascimento):'—'}</td>
+          <td>${conv?escHtml(conv.nome):'<span style="color:var(--gray)">Particular</span>'}</td>
           <td>${p.anonimizadoEm?'<span class="tag">Anonimizado</span>':p.consentimentoLgpdEm?'<span class="badge confirmado">Consentiu</span>':'<span class="badge faltou">Pendente</span>'}</td>
-          <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${p.telefone||''}',''),'_blank')">💬</button></td></tr>`;
+          <td style="text-align:right"><button class="iconBtn" title="WhatsApp" onclick="event.stopPropagation();window.open(waLink('${escJsAttr(p.telefone||'')}',''),'_blank')">💬</button></td></tr>`;
         }).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum paciente ainda</div>Cadastre o primeiro paciente pra começar a usar a agenda.</div>`}
     </div>`;
@@ -1229,14 +1303,14 @@ async function abrirModalPaciente(id){
   openModal(`
     <div class="modalHead"><h3>${p?'Editar paciente':'Novo paciente'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome completo</label><input id="pNome" value="${p?p.nome:''}"></div>
+      <div class="field"><label>Nome completo</label><input id="pNome" value="${p?escHtml(p.nome):''}"></div>
       <div class="formRow">
-        <div class="field"><label>Telefone (WhatsApp)</label><input id="pTel" placeholder="(11) 99999-9999" value="${p?p.telefone||'':''}"></div>
-        <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?p.nascimento||'':''}"></div>
+        <div class="field"><label>Telefone (WhatsApp)</label><input id="pTel" placeholder="(11) 99999-9999" value="${p?escHtml(p.telefone||''):''}"></div>
+        <div class="field"><label>Nascimento</label><input type="date" id="pNasc" value="${p?escHtml(p.nascimento||''):''}"></div>
       </div>
       <div class="formRow">
-        <div class="field"><label>CPF</label><input id="pCpf" placeholder="000.000.000-00" value="${p?p.cpf||'':''}"></div>
-        <div class="field"><label>E-mail</label><input type="email" id="pEmail" placeholder="paciente@email.com" value="${p?p.email||'':''}"></div>
+        <div class="field"><label>CPF</label><input id="pCpf" placeholder="000.000.000-00" value="${p?escHtml(p.cpf||''):''}"></div>
+        <div class="field"><label>E-mail</label><input type="email" id="pEmail" placeholder="paciente@email.com" value="${p?escHtml(p.email||''):''}"></div>
       </div>
       <div class="formRow">
         <div class="field"><label>Sexo/gênero</label><select id="pSexo">
@@ -1245,45 +1319,46 @@ async function abrirModalPaciente(id){
           <option value="masculino" ${p&&p.sexo==='masculino'?'selected':''}>Masculino</option>
           <option value="outro" ${p&&p.sexo==='outro'?'selected':''}>Outro</option>
         </select></div>
-        <div class="field"><label>Endereço</label><input id="pEndereco" placeholder="Rua, número, bairro, cidade" value="${p?p.endereco||'':''}"></div>
+        <div class="field"><label>Endereço</label><input id="pEndereco" placeholder="Rua, número, bairro, cidade" value="${p?escHtml(p.endereco||''):''}"></div>
       </div>
       <div class="field" style="background:var(--coral-soft);border-radius:8px;padding:10px 12px">
         <label style="font-size:12px;font-weight:600;color:var(--coral);margin-bottom:5px;display:block">⚠ Alergias</label>
-        <input id="pAlergias" placeholder="Ex: Dipirona, látex, penicilina…" value="${p?p.alergias||'':''}" style="background:#fff">
+        <input id="pAlergias" placeholder="Ex: Dipirona, látex, penicilina…" value="${p?escHtml(p.alergias||''):''}" style="background:#fff">
       </div>
       <div class="formRow">
-        <div class="field"><label>Contato de emergência (nome)</label><input id="pEmergNome" placeholder="Nome" value="${p?p.emergenciaNome||'':''}"></div>
-        <div class="field"><label>Contato de emergência (telefone)</label><input id="pEmergTel" placeholder="(11) 99999-9999" value="${p?p.emergenciaTelefone||'':''}"></div>
+        <div class="field"><label>Contato de emergência (nome)</label><input id="pEmergNome" placeholder="Nome" value="${p?escHtml(p.emergenciaNome||''):''}"></div>
+        <div class="field"><label>Contato de emergência (telefone)</label><input id="pEmergTel" placeholder="(11) 99999-9999" value="${p?escHtml(p.emergenciaTelefone||''):''}"></div>
       </div>
       <div class="formRow">
         <div class="field"><label>Convênio padrão</label><select id="pConvenio">
           <option value="">Particular / sem convênio</option>
-          ${conveniosData.map(c=>`<option value="${c.id}" ${p&&p.convenioId===c.id?'selected':''}>${c.nome}</option>`).join('')}
+          ${conveniosData.map(c=>`<option value="${escHtml(c.id)}" ${p&&p.convenioId===c.id?'selected':''}>${escHtml(c.nome)}</option>`).join('')}
         </select></div>
-        <div class="field"><label>Nº da carteirinha</label><input id="pCarteirinha" placeholder="0000000000" value="${p?p.carteirinha||'':''}"></div>
+        <div class="field"><label>Nº da carteirinha</label><input id="pCarteirinha" placeholder="0000000000" value="${p?escHtml(p.carteirinha||''):''}"></div>
       </div>
-      <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?p.obs||'':''}</textarea></div>
+      <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?escHtml(p.obs||''):''}</textarea></div>
       ${p ? renderConsentimentoBox(p,cfg) : `<p style="font-size:12px;color:var(--gray)">Depois de salvar, você poderá registrar o consentimento LGPD deste paciente.</p>`}
     </div>
     <div class="modalFoot">
-      ${p&&podeVerProntuario()?`<button class="btn" onclick="abrirProntuario('${p.id}')">Ver prontuário</button>`:''}
-      ${p?`<button class="btn sm" onclick="gerarPortalPaciente('${p.id}')">Link do portal</button>`:''}
-      ${p?`<button class="btn sm" onclick="exportarDadosPaciente('${p.id}')">Exportar dados</button>`:''}
-      ${p&&meuPerfil==='admin'?`<button class="btn danger" onclick="anonimizarPaciente('${p.id}')">Anonimizar</button>`:''}
-      ${p?`<button class="btn danger" onclick="excluirPaciente('${p.id}')">Excluir</button>`:''}
+      ${p&&podeVerProntuario()?`<button class="btn" onclick="abrirProntuario('${escJsAttr(p.id)}')">Ver prontuário</button>`:''}
+      ${p?`<button class="btn sm" onclick="gerarPortalPaciente('${escJsAttr(p.id)}')">Link do portal</button>`:''}
+      ${p?`<button class="btn sm" onclick="exportarDadosPaciente('${escJsAttr(p.id)}')">Exportar dados</button>`:''}
+      ${p&&meuPerfil==='admin'?`<button class="btn danger" onclick="anonimizarPaciente('${escJsAttr(p.id)}')">Anonimizar</button>`:''}
+      ${p?`<button class="btn danger" onclick="excluirPaciente('${escJsAttr(p.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarPaciente(${p?`'${p.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarPaciente(${p?`'${escJsAttr(p.id)}'`:'null'})">Salvar</button>
     </div>
   `);
   if(p && !(p.consentimentoLgpdEm) ) initAssinaturaCanvas();
 }
 function renderConsentimentoBox(p,cfg){
   if(p.consentimentoLgpdEm){
+    const assinaturaOk=/^data:image\/(png|jpeg);base64,[a-zA-Z0-9+/=]+$/.test(p.consentimentoAssinatura||'');
     return `<div class="card" style="background:var(--teal-soft);border:none;padding:12px">
       <div style="font-size:13px;color:var(--teal)"><b>✓ Consentimento LGPD registrado</b></div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">${p.consentimentoNome?`Por ${p.consentimentoNome}, `:''}em ${fmtDataHora(p.consentimentoLgpdEm)}</div>
-      ${p.consentimentoAssinatura?`<img src="${p.consentimentoAssinatura}" style="max-width:220px;margin-top:8px;border:1px solid var(--line);border-radius:8px;background:#fff;display:block">`:''}
-      <button class="btn sm" style="margin-top:8px" onclick="revogarConsentimento('${p.id}')">Revogar consentimento</button>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">${p.consentimentoNome?`Por ${escHtml(p.consentimentoNome)}, `:''}em ${fmtDataHora(p.consentimentoLgpdEm)}</div>
+      ${assinaturaOk?`<img src="${escHtml(p.consentimentoAssinatura)}" style="max-width:220px;margin-top:8px;border:1px solid var(--line);border-radius:8px;background:#fff;display:block">`:''}
+      <button class="btn sm" style="margin-top:8px" onclick="revogarConsentimento('${escJsAttr(p.id)}')">Revogar consentimento</button>
     </div>`;
   }
   const termo=cfg.termoLgpd||'Autorizo o tratamento dos meus dados pessoais e de saúde por esta clínica, exclusivamente para fins de agendamento, atendimento clínico, financeiro e comunicação sobre minhas consultas, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018).';
@@ -1291,13 +1366,14 @@ function renderConsentimentoBox(p,cfg){
     <div style="font-weight:600;font-size:13px;margin-bottom:6px">Consentimento LGPD (dado de saúde)</div>
     <div style="background:var(--teal-soft);border-radius:8px;padding:10px 12px;margin-bottom:12px">
       <div style="font-size:12.5px;color:var(--teal);font-weight:600">Prefere que o próprio paciente assine?</div>
-      <div style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Manda um link — ele assina pelo celular dele, sem precisar de login. A assinatura fica pendente de aprovação sua antes de valer.</div>
-      <button class="btn sm" onclick="enviarLinkConsentimentoEmail('${p.id}')">✉ Enviar por e-mail</button>
-      <button class="btn sm" onclick="copiarLinkConsentimento('${p.id}')">🔗 Copiar link</button>
+      <div style="font-size:12px;color:var(--ink-soft);margin:4px 0 8px">Manda um link — ele assina pelo celular dele, sem precisar de login. A assinatura fica pendente de aprovação sua antes de valer. Prefira WhatsApp: e-mail corporativo (Outlook/Microsoft 365) costuma reescrever o link e pode travar o paciente numa tela pedindo pra instalar o Edge.</div>
+      <button class="btn sm primary" onclick="enviarLinkConsentimentoWhats('${escJsAttr(p.id)}')">💬 Enviar por WhatsApp</button>
+      <button class="btn sm" onclick="enviarLinkConsentimentoEmail('${escJsAttr(p.id)}')">✉ Enviar por e-mail</button>
+      <button class="btn sm" onclick="copiarLinkConsentimento('${escJsAttr(p.id)}')">🔗 Copiar link</button>
     </div>
     <div style="font-size:12px;color:var(--gray);margin-bottom:8px">— ou registre aqui mesmo, presencialmente —</div>
-    <textarea readonly rows="4" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink-soft)">${termo}</textarea>
-    <div class="field" style="margin-top:10px"><label>Nome de quem autorizou (paciente ou responsável)</label><input id="consNome" placeholder="Nome completo" value="${p.nome}"></div>
+    <textarea readonly rows="4" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink-soft)">${escHtml(termo)}</textarea>
+    <div class="field" style="margin-top:10px"><label>Nome de quem autorizou (paciente ou responsável)</label><input id="consNome" placeholder="Nome completo" value="${escHtml(p.nome)}"></div>
     <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin-bottom:8px">
       <input type="checkbox" id="consCheck" style="width:auto;margin-top:2px"> Li e confirmo que este termo foi lido/explicado ao paciente ou responsável, que autorizou.
     </label>
@@ -1370,25 +1446,25 @@ function pintarProntuario(p){
   const esp=prontuarioCfg.especialidade;
   const ehOdonto=(esp==='Odontologia'), ehPsico=(esp==='Psicologia'), ehFisio=(esp==='Fisioterapia'), ehNutri=(esp==='Nutrição'), ehDermato=(esp==='Dermatologia');
   openModal(`
-    <div class="modalHead"><h3>Prontuário — ${p.nome}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
+    <div class="modalHead"><h3>Prontuário — ${escHtml(p.nome)}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
       ${p.alergias?`<div class="card" style="background:var(--coral-soft);border:none;margin-bottom:14px;padding:10px 12px">
-        <b style="color:var(--coral);font-size:13px">⚠ Alergias: ${p.alergias}</b>
+        <b style="color:var(--coral);font-size:13px">⚠ Alergias: ${escHtml(p.alergias)}</b>
       </div>`:''}
       <div class="toolbar" style="margin-bottom:14px">
-        ${ehOdonto?`<button class="btn sm" onclick="abrirOdontograma('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🦷 Odontograma</button>`:''}
-        ${ehPsico?`<button class="btn sm" onclick="abrirPacoteSessoes('${p.id}','${p.nome.replace(/'/g,"\\'")}')">📋 Pacote de sessões</button>`:''}
-        ${ehFisio?`<button class="btn sm" onclick="abrirGraficoEvolucao('${p.id}','${p.nome.replace(/'/g,"\\'")}','fisio')">📈 Evolução (dor/amplitude)</button>`:''}
-        ${ehNutri?`<button class="btn sm" onclick="abrirGraficoEvolucao('${p.id}','${p.nome.replace(/'/g,"\\'")}','nutri')">📈 Evolução (peso/IMC)</button>`:''}
-        ${ehDermato?`<button class="btn sm" onclick="abrirMapaCorporal('${p.id}','${p.nome.replace(/'/g,"\\'")}')">🗺️ Mapa corporal</button>`:''}
-        <button class="btn sm" onclick="abrirPrescricao('${p.id}','${p.nome.replace(/'/g,"\\'")}')">💊 Prescrever</button>
+        ${ehOdonto?`<button class="btn sm" onclick="abrirOdontograma('${escJsAttr(p.id)}','${escJsAttr(p.nome)}')">🦷 Odontograma</button>`:''}
+        ${ehPsico?`<button class="btn sm" onclick="abrirPacoteSessoes('${escJsAttr(p.id)}','${escJsAttr(p.nome)}')">📋 Pacote de sessões</button>`:''}
+        ${ehFisio?`<button class="btn sm" onclick="abrirGraficoEvolucao('${escJsAttr(p.id)}','${escJsAttr(p.nome)}','fisio')">📈 Evolução (dor/amplitude)</button>`:''}
+        ${ehNutri?`<button class="btn sm" onclick="abrirGraficoEvolucao('${escJsAttr(p.id)}','${escJsAttr(p.nome)}','nutri')">📈 Evolução (peso/IMC)</button>`:''}
+        ${ehDermato?`<button class="btn sm" onclick="abrirMapaCorporal('${escJsAttr(p.id)}','${escJsAttr(p.nome)}')">🗺️ Mapa corporal</button>`:''}
+        <button class="btn sm" onclick="abrirPrescricao('${escJsAttr(p.id)}','${escJsAttr(p.nome)}')">💊 Prescrever</button>
         <button class="btn sm" onclick="gerenciarModelos()">Modelos de anamnese</button>
       </div>
       <div class="formRow">
         <div class="field"><label>Data</label><input type="date" id="evData" value="${hojeISO()}"></div>
         <div class="field"><label>Modelo (opcional)</label><select id="evModelo" onchange="aplicarModeloEvolucao(this.value)">
           <option value="">Em branco</option>
-          ${modelosDisponiveis().map(m=>`<option value="${m.id}">${m.nome} (${m.especialidade})</option>`).join('')}
+          ${modelosDisponiveis().map(m=>`<option value="${escHtml(m.id)}">${escHtml(m.nome)} (${escHtml(m.especialidade)})</option>`).join('')}
         </select></div>
       </div>
       ${ehFisio?`<div class="formRow">
@@ -1408,14 +1484,14 @@ function pintarProntuario(p){
             <div style="display:flex;justify-content:space-between;align-items:center">
               <b style="font-family:'Newsreader',serif">${fmtData(e.data)}</b>
               <div style="display:flex;gap:4px;align-items:center">
-                ${e.assinadoEm?`<span class="tag" style="background:var(--teal-soft);color:var(--teal)" title="Assinado em ${fmtDataHora(e.assinadoEm)}">✓ assinado</span>`:`<button class="btn sm" onclick="assinarEvolucao('${e.id}')">Assinar</button>`}
-                ${!e.assinadoEm?`<button class="iconBtn" onclick="excluirEvolucao('${e.id}')">🗑</button>`:''}
+                ${e.assinadoEm?`<span class="tag" style="background:var(--teal-soft);color:var(--teal)" title="Assinado em ${fmtDataHora(e.assinadoEm)}">✓ assinado</span>`:`<button class="btn sm" onclick="assinarEvolucao('${escJsAttr(e.id)}')">Assinar</button>`}
+                ${!e.assinadoEm?`<button class="iconBtn" onclick="excluirEvolucao('${escJsAttr(e.id)}')">🗑</button>`:''}
               </div>
             </div>
-            ${(e.dor!=null||e.amplitude!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Dor: ${e.dor??'—'}/10 · Amplitude: ${e.amplitude??'—'}°</div>`:''}
-            ${(e.pesoKg!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Peso: ${e.pesoKg}kg${e.imc?` · IMC: ${e.imc}`:''}</div>`:''}
-            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${e.texto||''}</div>
-            ${e.anexoNome?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${e.anexoData}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${e.anexoData}" download="${e.anexoNome}" class="tag">📎 ${e.anexoNome}</a>`}</div>`:''}
+            ${(e.dor!=null||e.amplitude!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Dor: ${escHtml(e.dor??'—')}/10 · Amplitude: ${escHtml(e.amplitude??'—')}°</div>`:''}
+            ${(e.pesoKg!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Peso: ${escHtml(e.pesoKg)}kg${e.imc?` · IMC: ${escHtml(e.imc)}`:''}</div>`:''}
+            <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${escHtml(e.texto||'')}</div>
+            ${e.anexoNome&&/^data:(image\/(png|jpeg|gif|webp)|application\/pdf);base64,[a-zA-Z0-9+/=]+$/.test(e.anexoData||'')?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${escHtml(e.anexoData)}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${escHtml(e.anexoData)}" download="${escHtml(e.anexoNome)}" class="tag">📎 ${escHtml(e.anexoNome)}</a>`}</div>`:''}
           </div>`).join('') : `<div class="empty">Nenhuma evolução registrada ainda.</div>`}
       </div>
     </div>
@@ -1479,9 +1555,9 @@ function gerenciarModelos(){
     <div class="modalBody">
       <p style="font-size:12.5px;color:var(--ink-soft);margin-top:0">Modelos padrão (clínico geral, odontologia, psicologia) já vêm prontos. Crie os seus abaixo.</p>
       <div id="modelosList">${prontuarioModelos.map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line-soft)">
-        <span>${m.nome} <span class="tag">${m.especialidade}</span></span><button class="iconBtn" onclick="excluirModelo('${m.id}')">🗑</button></div>`).join('')||'<p style="font-size:12.5px;color:var(--gray)">Nenhum modelo próprio ainda.</p>'}</div>
+        <span>${escHtml(m.nome)} <span class="tag">${escHtml(m.especialidade)}</span></span><button class="iconBtn" onclick="excluirModelo('${escJsAttr(m.id)}')">🗑</button></div>`).join('')||'<p style="font-size:12.5px;color:var(--gray)">Nenhum modelo próprio ainda.</p>'}</div>
       <div class="field" style="margin-top:14px"><label>Nome do modelo</label><input id="mdNome" placeholder="Ex: Retorno pós-operatório"></div>
-      <div class="field"><label>Especialidade</label><input id="mdEsp" placeholder="Ex: Odontologia" value="${prontuarioCfg.especialidade||''}"></div>
+      <div class="field"><label>Especialidade</label><input id="mdEsp" placeholder="Ex: Odontologia" value="${escHtml(prontuarioCfg.especialidade||'')}"></div>
       <div class="field"><label>Texto (campos/roteiro)</label><textarea id="mdTexto" rows="4" placeholder="Queixa:\nExame:\nConduta:"></textarea></div>
       <button class="btn primary sm" onclick="salvarModelo()">Adicionar modelo</button>
     </div>
@@ -1744,12 +1820,12 @@ async function anonimizarPaciente(id){
 <script>
 /* ================= FINANCEIRO ================= */
 let lancData=[]; let contasData=[]; let financeiroMes=hojeISO().slice(0,7); let financeiroSubTab='lancamentos';
-let comissaoAgend=[], comissaoProc=[], planosRecorrentesData=[];
+let comissaoAgend=[], comissaoProc=[], comissaoEstoque=[], planosRecorrentesData=[];
 async function renderFinanceiro(){
   $('topbarActs').innerHTML='';
   $('content').innerHTML='<div class="empty">Carregando…</div>';
-  [lancData,contasData,comissaoAgend,comissaoProc,planosRecorrentesData]=await Promise.all([
-    loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('planosRecorrentes')
+  [lancData,contasData,comissaoAgend,comissaoProc,comissaoEstoque,planosRecorrentesData]=await Promise.all([
+    loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('estoque'),loadList('planosRecorrentes')
   ]);
   pintarFinanceiro();
 }
@@ -1780,7 +1856,7 @@ function pintarFinanceiro(){
     </div>
     <div class="panel">
       ${doMes.length?`<table class="tbl"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Natureza</th><th>Tipo</th><th>Valor</th><th></th></tr></thead><tbody>
-        ${doMes.map(l=>`<tr><td>${fmtData(l.data)}</td><td>${l.descricao}</td><td><span class="tag">${l.categoria||'—'}</span></td><td><span class="tag">${naturezaLabel(l.natureza)}</span></td>
+        ${doMes.map(l=>`<tr><td>${fmtData(l.data)}</td><td>${escHtml(l.descricao)}</td><td><span class="tag">${escHtml(l.categoria)||'—'}</span></td><td><span class="tag">${naturezaLabel(l.natureza)}</span></td>
           <td><span class="badge ${l.tipo==='receita'?'confirmado':'cancelado'}">${l.tipo==='receita'?'Receita':'Despesa'}</span></td>
           <td class="mono">${BRL(l.valor)}</td>
           <td style="text-align:right;white-space:nowrap">
@@ -1817,7 +1893,7 @@ function pintarComissoes(){
   const porProfissional={};
   doMes.forEach(a=>{
     const proc=comissaoProc.find(p=>p.id===a.procedimentoId); if(!proc) return;
-    const preco=proc.precoManual||precoSugeridoAgenda(proc);
+    const preco=precoFinalProcedimento(proc,comissaoEstoque);
     const pct=Number(proc.comissaoPct||0); if(!pct) return;
     const valorComissao=preco*pct/100;
     const prof=a.profissional||'(sem profissional definido)';
@@ -1902,10 +1978,10 @@ function abrirModalLancamento(id){
         <div class="field"><label>Tipo</label><select id="lTipo"><option value="receita" ${l&&l.tipo==='receita'?'selected':''}>Receita (recebido)</option><option value="despesa" ${l&&l.tipo==='despesa'?'selected':''}>Despesa (gasto)</option></select></div>
         <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="lValor" value="${l?l.valor:''}"></div>
       </div>
-      <div class="field"><label>Descrição</label><input id="lDesc" placeholder="Ex: Consulta - João Silva" value="${l?l.descricao:''}"></div>
+      <div class="field"><label>Descrição</label><input id="lDesc" placeholder="Ex: Consulta - João Silva" value="${l?escHtml(l.descricao):''}"></div>
       <div class="formRow">
-        <div class="field"><label>Categoria</label><input id="lCat" placeholder="Consulta, aluguel, material…" value="${l?l.categoria||'':''}"></div>
-        <div class="field"><label>Data</label><input type="date" id="lData" value="${l?l.data:hojeISO()}"></div>
+        <div class="field"><label>Categoria</label><input id="lCat" placeholder="Consulta, aluguel, material…" value="${l?escHtml(l.categoria||''):''}"></div>
+        <div class="field"><label>Data</label><input type="date" id="lData" value="${l?escHtml(l.data):hojeISO()}"></div>
       </div>
       <div class="field"><label>Natureza (pro DRE)</label><select id="lNatureza">
         <option value="fixa" ${l&&l.natureza==='fixa'?'selected':''}>Despesa fixa (aluguel, salário fixo…)</option>
@@ -1914,9 +1990,9 @@ function abrirModalLancamento(id){
       </select></div>
     </div>
     <div class="modalFoot">
-      ${l?`<button class="btn danger" onclick="excluirLancamento('${l.id}')">Excluir</button>`:''}
+      ${l?`<button class="btn danger" onclick="excluirLancamento('${escJsAttr(l.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarLancamento(${l?`'${l.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarLancamento(${l?`'${escJsAttr(l.id)}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarLancamento(id){
@@ -2081,7 +2157,7 @@ function exportarEstoqueCSV(){
 function pintarEstoque(){
   $('content').innerHTML=`<div class="panel">
     ${estoqueData.length?`<table class="tbl"><thead><tr><th>Item</th><th>Quantidade</th><th>Mínimo</th><th>Custo unit.</th><th></th></tr></thead><tbody>
-      ${estoqueData.map(i=>`<tr><td>${i.nome}</td><td class="${Number(i.qtd)<=Number(i.minimo||0)?'stockLow':''}">${i.qtd} ${i.unidade||''}</td><td>${i.minimo||0} ${i.unidade||''}</td><td class="mono">${BRL(i.custoUnitario||0)}</td>
+      ${estoqueData.map(i=>`<tr><td>${escHtml(i.nome)}</td><td class="${Number(i.qtd)<=Number(i.minimo||0)?'stockLow':''}">${escHtml(i.qtd)} ${escHtml(i.unidade||'')}</td><td>${escHtml(i.minimo||0)} ${escHtml(i.unidade||'')}</td><td class="mono">${BRL(i.custoUnitario||0)}</td>
         <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
           <button class="iconBtn" title="Entrada" onclick="ajustarEstoque('${i.id}',1)">＋</button>
           <button class="iconBtn" title="Saída" onclick="ajustarEstoque('${i.id}',-1)">－</button>
@@ -2103,21 +2179,21 @@ function abrirModalEstoque(id){
   openModal(`
     <div class="modalHead"><h3>${i?'Editar item':'Novo item de estoque'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do item</label><input id="eNome" placeholder="Ex: Luvas descartáveis (caixa)" value="${i?i.nome:''}"></div>
+      <div class="field"><label>Nome do item</label><input id="eNome" placeholder="Ex: Luvas descartáveis (caixa)" value="${i?escHtml(i.nome):''}"></div>
       <div class="formRow">
-        <div class="field"><label>Quantidade atual</label><input type="number" step="0.01" id="eQtd" value="${i?i.qtd:0}"></div>
-        <div class="field"><label>Unidade</label><input id="eUn" placeholder="un, caixa, ml…" value="${i?i.unidade||'':''}"></div>
+        <div class="field"><label>Quantidade atual</label><input type="number" step="0.01" id="eQtd" value="${i?escHtml(i.qtd):0}"></div>
+        <div class="field"><label>Unidade</label><input id="eUn" placeholder="un, caixa, ml…" value="${i?escHtml(i.unidade||''):''}"></div>
       </div>
       <div class="formRow">
-        <div class="field"><label>Estoque mínimo (alerta)</label><input type="number" step="0.01" id="eMin" value="${i?i.minimo||0:0}"></div>
-        <div class="field"><label>Custo unitário (R$)</label><input type="number" step="0.01" id="eCusto" value="${i?i.custoUnitario||0:0}"></div>
+        <div class="field"><label>Estoque mínimo (alerta)</label><input type="number" step="0.01" id="eMin" value="${i?escHtml(i.minimo||0):0}"></div>
+        <div class="field"><label>Custo unitário (R$)</label><input type="number" step="0.01" id="eCusto" value="${i?escHtml(i.custoUnitario||0):0}"></div>
       </div>
       <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px">O custo unitário é usado pra calcular automaticamente o custo dos procedimentos.</p>
     </div>
     <div class="modalFoot">
-      ${i?`<button class="btn danger" onclick="excluirEstoque('${i.id}')">Excluir</button>`:''}
+      ${i?`<button class="btn danger" onclick="excluirEstoque('${escJsAttr(i.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarEstoque(${i?`'${i.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarEstoque(${i?`'${escJsAttr(i.id)}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarEstoque(id){
@@ -2145,24 +2221,18 @@ async function renderProcedimentos(){
   [procData,procEstoque]=await Promise.all([loadList('procedimentos'),loadList('estoque')]);
   pintarProcedimentos();
 }
-function custoProcedimento(p){
-  return (p.itens||[]).reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
-}
-function precoSugerido(p){
-  const custo=custoProcedimento(p); const m=Number(p.margem||0);
-  if(m<=0||m>=100) return custo;
-  return custo/(1-m/100);
-}
+function custoProcedimento(p){ return custoInsumosProcedimento(p,procEstoque); }
+function precoSugerido(p){ return precoFinalProcedimento(p,procEstoque); }
 function pintarProcedimentos(){
   $('content').innerHTML=`<div class="panel">
-    ${procData.length?`<table class="tbl"><thead><tr><th>Procedimento</th><th>Insumos</th><th>Custo</th><th>Margem</th><th>Preço sugerido</th><th></th></tr></thead><tbody>
+    ${procData.length?`<table class="tbl"><thead><tr><th>Procedimento</th><th>Insumos</th><th>Custo</th><th>Margem</th><th>Preço final</th><th></th></tr></thead><tbody>
       ${procData.map(p=>{
-        const custo=custoProcedimento(p), sugerido=precoSugerido(p);
-        return `<tr><td>${p.nome}</td><td>${(p.itens||[]).length} item(ns)</td><td class="mono">${BRL(custo)}</td><td>${p.margem||0}%</td>
-          <td class="mono" style="font-weight:600">${BRL(p.precoManual||sugerido)}</td>
-          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalProcedimento('${p.id}')">✎</button></td></tr>`;
+        const custo=custoProcedimento(p), final=precoSugerido(p);
+        return `<tr><td>${escHtml(p.nome)}</td><td>${(p.itens||[]).length} item(ns)</td><td class="mono">${BRL(custo)}</td><td>${escHtml(p.margem||0)}%</td>
+          <td class="mono" style="font-weight:600">${BRL(final)}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalProcedimento('${escJsAttr(p.id)}')">✎</button></td></tr>`;
       }).join('')}
-    </tbody></table>`:`<div class="empty"><div class="big">Nenhum procedimento cadastrado</div>Cadastre os procedimentos com os insumos que cada um consome — o custo e o preço sugerido são calculados sozinhos.</div>`}
+    </tbody></table>`:`<div class="empty"><div class="big">Nenhum procedimento cadastrado</div>Cadastre os procedimentos com os insumos que cada um consome — o custo e o preço final são calculados sozinhos.</div>`}
   </div>`;
 }
 function abrirModalProcedimento(id){
@@ -2172,47 +2242,46 @@ function abrirModalProcedimento(id){
   renderModalProcedimento(id||null);
 }
 function renderModalProcedimento(id){
-  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
-  const margem=Number(procDraft.margem||0);
-  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
-  const precoManual=Number(procDraft.precoManual||0);
-  const precoFinal = precoManual>0 ? precoManual : sugerido;
+  const draftAsProc={itens:procItensTemp,margem:procDraft.margem,precoManual:procDraft.precoManual};
+  const custo=custoInsumosProcedimento(draftAsProc,procEstoque);
+  const sugerido=precoSugeridoProcedimento(custo,procDraft.margem);
+  const precoFinal=precoFinalProcedimento(draftAsProc,procEstoque);
   openModal(`
     <div class="modalHead"><h3>${id?'Editar procedimento':'Novo procedimento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele, Consulta de rotina…" value="${procDraft.nome||''}" onchange="procDraft.nome=this.value"></div>
+      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele, Consulta de rotina…" value="${escHtml(procDraft.nome||'')}" onchange="procDraft.nome=this.value"></div>
       <div class="field"><label>Insumos consumidos (deixe vazio se a consulta não usa material)</label>
         <div id="prItensList">${procItensTemp.map((it,idx)=>{
           const e=procEstoque.find(x=>x.id===it.estoqueId);
           return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-            <span style="flex:1;font-size:13px">${e?e.nome:'(item removido)'}</span>
-            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${it.qtd} ${e?e.unidade||'':''}</span>
-            <button class="iconBtn" onclick="removerItemProc(${idx},'${id||''}')">🗑</button>
+            <span style="flex:1;font-size:13px">${e?escHtml(e.nome):'(item removido)'}</span>
+            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${escHtml(it.qtd)} ${e?escHtml(e.unidade||''):''}</span>
+            <button class="iconBtn" onclick="removerItemProc(${idx},'${escJsAttr(id||'')}')">🗑</button>
           </div>`;
         }).join('') || '<p style="font-size:12.5px;color:var(--gray)">Nenhum insumo — tudo bem, nem toda consulta usa material.</p>'}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <select id="prItemSel" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--paper)">
-            ${procEstoque.map(e=>`<option value="${e.id}">${e.nome} (${BRL(e.custoUnitario||0)}/${e.unidade||'un'})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
+            ${procEstoque.map(e=>`<option value="${escHtml(e.id)}">${escHtml(e.nome)} (${BRL(e.custoUnitario||0)}/${escHtml(e.unidade||'un')})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
           </select>
           <input type="number" step="0.01" id="prItemQtd" placeholder="Qtd" value="1" style="width:80px;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
-          <button class="btn sm" onclick="adicionarItemProc('${id||''}')">Adicionar</button>
+          <button class="btn sm" onclick="adicionarItemProc('${escJsAttr(id||'')}')">Adicionar</button>
         </div>
       </div>
       <div class="formRow">
-        <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" id="prMargem" value="${margem}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
-        <div class="field"><label>Preço da consulta (opcional — preenche direto se não tiver insumo)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" oninput="procDraft.precoManual=this.value;atualizarPrecoModal()" placeholder="Ex: 200"></div>
+        <div class="field"><label>Margem de lucro desejada (%) — usada só quando não houver preço da consulta preenchido</label><input type="number" id="prMargem" value="${escHtml(procDraft.margem)}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
+        <div class="field"><label>Preço da consulta (seu honorário — o custo do insumo é somado a ele automaticamente)</label><input type="number" step="0.01" id="prPrecoManual" value="${escHtml(procDraft.precoManual||'')}" oninput="procDraft.precoManual=this.value;atualizarPrecoModal()" placeholder="Ex: 200"></div>
       </div>
-      <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${procDraft.comissaoPct||''}" placeholder="Ex: 30"></div>
+      <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${escHtml(procDraft.comissaoPct||'')}" placeholder="Ex: 30"></div>
       <div class="card" style="background:var(--teal-soft);border:none">
         <div style="display:flex;justify-content:space-between;font-size:13px"><span>Custo dos insumos</span><b class="mono" id="prCustoView">${BRL(custo)}</b></div>
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:2px;color:var(--ink-soft)"><span>Preço sugerido (pela margem)</span><b class="mono" id="prSugeridoView">${BRL(sugerido)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:2px;color:var(--ink-soft)"><span>Preço sugerido (pela margem, sem consulta)</span><b class="mono" id="prSugeridoView">${BRL(sugerido)}</b></div>
         <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:6px;border-top:1px solid #ffffff80;padding-top:6px"><span><b>Preço final</b></span><b class="mono" id="prFinalView" style="color:var(--teal)">${BRL(precoFinal)}</b></div>
       </div>
     </div>
     <div class="modalFoot">
-      ${id?`<button class="btn danger" onclick="excluirProcedimento('${id}')">Excluir</button>`:''}
+      ${id?`<button class="btn danger" onclick="excluirProcedimento('${escJsAttr(id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarProcedimento(${id?`'${id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarProcedimento(${id?`'${escJsAttr(id)}'`:'null'})">Salvar</button>
     </div>
   `);
 }
@@ -2228,11 +2297,10 @@ function removerItemProc(idx,id){
   renderModalProcedimento(id||null);
 }
 function atualizarPrecoModal(){
-  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
-  const margem=Number($('prMargem').value||0);
-  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
-  const precoManual=Number($('prPrecoManual').value||0);
-  const precoFinal = precoManual>0 ? precoManual : sugerido;
+  const draftAsProc={itens:procItensTemp,margem:$('prMargem').value,precoManual:$('prPrecoManual').value};
+  const custo=custoInsumosProcedimento(draftAsProc,procEstoque);
+  const sugerido=precoSugeridoProcedimento(custo,draftAsProc.margem);
+  const precoFinal=precoFinalProcedimento(draftAsProc,procEstoque);
   $('prCustoView').textContent=BRL(custo); $('prSugeridoView').textContent=BRL(sugerido); $('prFinalView').textContent=BRL(precoFinal);
 }
 async function salvarProcedimento(id){
@@ -2276,8 +2344,8 @@ function pintarConvenios(){
     <div class="toolbar"><span style="flex:1"></span><button class="btn primary sm" onclick="abrirModalConvenio()">+ Convênio</button></div>
     <div class="panel">
       ${conveniosData.length?`<table class="tbl"><thead><tr><th>Convênio</th><th>Registro ANS</th><th>Contato</th><th>Prazo de envio</th><th></th></tr></thead><tbody>
-        ${conveniosData.map(c=>`<tr><td>${c.nome}</td><td class="mono">${c.registroAns||'—'}</td><td>${c.contato||'—'}</td><td>${c.prazoEnvio?c.prazoEnvio+' dias':'—'}</td>
-          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalConvenio('${c.id}')">✎</button></td></tr>`).join('')}
+        ${conveniosData.map(c=>`<tr><td>${escHtml(c.nome)}</td><td class="mono">${escHtml(c.registroAns)||'—'}</td><td>${escHtml(c.contato)||'—'}</td><td>${c.prazoEnvio?escHtml(c.prazoEnvio)+' dias':'—'}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalConvenio('${escJsAttr(c.id)}')">✎</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum convênio cadastrado</div>Cadastre os planos de saúde que sua clínica atende.</div>`}
     </div>`;
 }
@@ -2286,17 +2354,17 @@ function abrirModalConvenio(id){
   openModal(`
     <div class="modalHead"><h3>${c?'Editar convênio':'Novo convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do convênio</label><input id="cvNome" placeholder="Ex: Bradesco Saúde" value="${c?c.nome:''}"></div>
+      <div class="field"><label>Nome do convênio</label><input id="cvNome" placeholder="Ex: Bradesco Saúde" value="${c?escHtml(c.nome):''}"></div>
       <div class="formRow">
-        <div class="field"><label>Registro ANS (operadora)</label><input id="cvAns" value="${c?c.registroAns||'':''}"></div>
-        <div class="field"><label>Prazo de envio (dias)</label><input type="number" id="cvPrazo" value="${c?c.prazoEnvio||30:30}"></div>
+        <div class="field"><label>Registro ANS (operadora)</label><input id="cvAns" value="${c?escHtml(c.registroAns||''):''}"></div>
+        <div class="field"><label>Prazo de envio (dias)</label><input type="number" id="cvPrazo" value="${c?escHtml(c.prazoEnvio||30):30}"></div>
       </div>
-      <div class="field"><label>Contato / suporte</label><input id="cvContato" placeholder="Telefone, e-mail…" value="${c?c.contato||'':''}"></div>
+      <div class="field"><label>Contato / suporte</label><input id="cvContato" placeholder="Telefone, e-mail…" value="${c?escHtml(c.contato||''):''}"></div>
     </div>
     <div class="modalFoot">
-      ${c?`<button class="btn danger" onclick="excluirConvenio('${c.id}')">Excluir</button>`:''}
+      ${c?`<button class="btn danger" onclick="excluirConvenio('${escJsAttr(c.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarConvenio(${c?`'${c.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarConvenio(${c?`'${escJsAttr(c.id)}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarConvenio(id){
@@ -2324,7 +2392,7 @@ function pintarTabelaPrecos(){
     <div class="toolbar">
       <select id="tpConvenioFiltro" onchange="mudarFiltroPreco(this.value)" style="padding:9px 11px;border:1px solid var(--line);border-radius:7px">
         <option value="" ${!tabelaPrecoFiltro?'selected':''}>Todos os convênios</option>
-        ${conveniosData.map(c=>`<option value="${c.id}" ${tabelaPrecoFiltro===c.id?'selected':''}>${c.nome}</option>`).join('')}
+        ${conveniosData.map(c=>`<option value="${escHtml(c.id)}" ${tabelaPrecoFiltro===c.id?'selected':''}>${escHtml(c.nome)}</option>`).join('')}
       </select>
       <span style="flex:1"></span>
       <button class="btn primary sm" onclick="abrirModalPreco()">+ Preço</button>
@@ -2334,8 +2402,8 @@ function pintarTabelaPrecos(){
       `<table class="tbl"><thead><tr><th>Convênio</th><th>Procedimento</th><th>Código TUSS</th><th>Valor</th><th></th></tr></thead><tbody>
           ${lista.map(t=>{
             const conv=conveniosData.find(c=>c.id===t.convenioId), proc=convProcedimentos.find(p=>p.id===t.procedimentoId);
-            return `<tr><td>${conv?conv.nome:'—'}</td><td>${proc?proc.nome:t.procedimentoNome||'—'}</td><td class="mono">${t.codigoTuss||'—'}</td><td class="mono">${BRL(t.valor)}</td>
-              <td style="text-align:right"><button class="iconBtn" onclick="abrirModalPreco('${t.id}')">✎</button></td></tr>`;
+            return `<tr><td>${conv?escHtml(conv.nome):'—'}</td><td>${proc?escHtml(proc.nome):escHtml(t.procedimentoNome)||'—'}</td><td class="mono">${escHtml(t.codigoTuss)||'—'}</td><td class="mono">${BRL(t.valor)}</td>
+              <td style="text-align:right"><button class="iconBtn" onclick="abrirModalPreco('${escJsAttr(t.id)}')">✎</button></td></tr>`;
           }).join('')}
         </tbody></table>`}
     </div>`;
@@ -2345,10 +2413,10 @@ function abrirModalPreco(id){
   openModal(`
     <div class="modalHead"><h3>${t?'Editar preço':'Novo preço por convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Convênio</label><select id="tpConvenio">${conveniosData.map(c=>`<option value="${c.id}" ${t&&t.convenioId===c.id?'selected':''}>${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
-      <div class="field"><label>Procedimento</label><select id="tpProcedimento">${convProcedimentos.map(p=>`<option value="${p.id}" ${t&&t.procedimentoId===p.id?'selected':''}>${p.nome}</option>`).join('')||'<option value="">Cadastre um procedimento primeiro</option>'}</select></div>
+      <div class="field"><label>Convênio</label><select id="tpConvenio">${conveniosData.map(c=>`<option value="${escHtml(c.id)}" ${t&&t.convenioId===c.id?'selected':''}>${escHtml(c.nome)}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Procedimento</label><select id="tpProcedimento">${convProcedimentos.map(p=>`<option value="${escHtml(p.id)}" ${t&&t.procedimentoId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um procedimento primeiro</option>'}</select></div>
       <div class="formRow">
-        <div class="field"><label>Código TUSS</label><input id="tpCodigo" placeholder="Ex: 10101012" value="${t?t.codigoTuss||'':''}"></div>
+        <div class="field"><label>Código TUSS</label><input id="tpCodigo" placeholder="Ex: 10101012" value="${t?escHtml(t.codigoTuss||''):''}"></div>
         <div class="field"><label>Valor pago pelo convênio (R$)</label><input type="number" step="0.01" id="tpValor" value="${t?t.valor:''}"></div>
       </div>
     </div>
@@ -2391,13 +2459,13 @@ function pintarGuias(){
     </div>
     <div class="panel">
       ${guiasData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Convênio</th><th>Procedimento</th><th>Valor</th><th>Status</th><th></th></tr></thead><tbody>
-        ${[...guiasData].sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||'')).map(g=>`<tr><td>${g.pacienteNome}</td><td>${g.convenioNome}</td><td>${g.procedimentoNome||'—'}</td><td class="mono">${BRL(g.valor)}</td>
-          <td><span class="badge ${guiaStatusBadge(g.status)}">${guiaStatusLabel(g.status)}</span>${g.motivoGlosa?`<div style="font-size:11px;color:var(--coral);margin-top:2px">${g.motivoGlosa}</div>`:''}</td>
+        ${[...guiasData].sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||'')).map(g=>`<tr><td>${escHtml(g.pacienteNome)}</td><td>${escHtml(g.convenioNome)}</td><td>${escHtml(g.procedimentoNome)||'—'}</td><td class="mono">${BRL(g.valor)}</td>
+          <td><span class="badge ${guiaStatusBadge(g.status)}">${guiaStatusLabel(g.status)}</span>${g.motivoGlosa?`<div style="font-size:11px;color:var(--coral);margin-top:2px">${escHtml(g.motivoGlosa)}</div>`:''}</td>
           <td style="text-align:right;white-space:nowrap">
-            ${g.status==='rascunho'?`<button class="btn sm" onclick="enviarGuia('${g.id}')">Enviar</button>`:''}
-            ${g.status==='enviada'?`<button class="btn sm" onclick="marcarGuiaPaga('${g.id}')">Paga</button><button class="btn sm" onclick="marcarGuiaGlosada('${g.id}')">Glosa</button>`:''}
-            ${g.status==='glosada'?`<button class="btn sm" onclick="reenviarGuia('${g.id}')">Reenviar</button>`:''}
-            <button class="iconBtn" onclick="excluirGuia('${g.id}')">🗑</button>
+            ${g.status==='rascunho'?`<button class="btn sm" onclick="enviarGuia('${escJsAttr(g.id)}')">Enviar</button>`:''}
+            ${g.status==='enviada'?`<button class="btn sm" onclick="marcarGuiaPaga('${escJsAttr(g.id)}')">Paga</button><button class="btn sm" onclick="marcarGuiaGlosada('${escJsAttr(g.id)}')">Glosa</button>`:''}
+            ${g.status==='glosada'?`<button class="btn sm" onclick="reenviarGuia('${escJsAttr(g.id)}')">Reenviar</button>`:''}
+            <button class="iconBtn" onclick="excluirGuia('${escJsAttr(g.id)}')">🗑</button>
           </td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhuma guia gerada</div>Crie uma guia vinculada a um atendimento de convênio.</div>`}
     </div>`;
@@ -2412,10 +2480,10 @@ function abrirModalGuia(){
   openModal(`
     <div class="modalHead"><h3>Nova guia (TISS)</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Convênio</label><select id="gvConvenio">${conveniosData.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
-      <div class="field"><label>Paciente</label><select id="gvPaciente">${convPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Convênio</label><select id="gvConvenio">${conveniosData.map(c=>`<option value="${escHtml(c.id)}">${escHtml(c.nome)}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="gvPaciente">${convPacientes.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="field"><label>Procedimento</label><select id="gvProcedimento" onchange="preencherValorGuia()">
-        <option value="">Selecione</option>${convProcedimentos.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')}
+        <option value="">Selecione</option>${convProcedimentos.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')}
       </select></div>
       <div class="field"><label>Valor da guia (R$)</label><input type="number" step="0.01" id="gvValor"></div>
     </div>
@@ -2509,8 +2577,8 @@ async function pintarMarketingInativos(){
     </div>
     <div class="panel">
       ${inativos.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Última consulta</th><th></th></tr></thead><tbody>
-        ${inativos.map(p=>`<tr><td>${p.nome}</td><td class="mono">${p.telefone}</td><td>${ultimaPorPaciente[p.id]?fmtData(ultimaPorPaciente[p.id]):'Nunca veio'}</td>
-          <td style="text-align:right"><button class="btn sm" onclick="reativarPaciente('${p.id}','${p.nome.replace(/'/g,"\\'")}','${p.telefone}')">Enviar mensagem</button></td></tr>`).join('')}
+        ${inativos.map(p=>`<tr><td>${escHtml(p.nome)}</td><td class="mono">${escHtml(p.telefone)}</td><td>${ultimaPorPaciente[p.id]?fmtData(ultimaPorPaciente[p.id]):'Nunca veio'}</td>
+          <td style="text-align:right"><button class="btn sm" onclick="reativarPaciente('${escJsAttr(p.id)}','${escJsAttr(p.nome)}','${escJsAttr(p.telefone)}')">Enviar mensagem</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Ninguém na lista</div>Todo mundo teve consulta recentemente, ou ninguém tem telefone cadastrado.</div>`}
     </div>
     ${inativos.length?`<div class="toolbar" style="margin-top:14px"><button class="btn primary" onclick="reativarTodos()">Disparar campanha pra todos os ${inativos.length}</button></div>`:''}
@@ -2558,7 +2626,7 @@ async function pintarMarketingNPS(){
     <div class="panel">
       <div class="panelHead"><h2>Comentários recentes</h2></div>
       ${avaliacoes.length?`<table class="tbl"><thead><tr><th>Data</th><th>Nota</th><th>Comentário</th></tr></thead><tbody>
-        ${avaliacoes.slice(0,50).map(a=>`<tr><td class="mono">${fmtDataHora(a.created_at||a.payload.criadoEm)}</td><td><b>${a.payload.nota}</b></td><td>${a.payload.comentario||'—'}</td></tr>`).join('')}
+        ${avaliacoes.slice(0,50).map(a=>`<tr><td class="mono">${fmtDataHora(a.created_at||a.payload.criadoEm)}</td><td><b>${escHtml(a.payload.nota)}</b></td><td>${escHtml(a.payload.comentario)||'—'}</td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhuma avaliação ainda</div>Use o botão ⭐ num agendamento atendido pra pedir uma avaliação ao paciente.</div>`}
     </div>`;
 }
@@ -2583,9 +2651,10 @@ async function initPublicRoute(){
   return true;
 }
 function publicoShell(titulo,corpoHTML,nomeClinica,logo){
+  const logoOk=/^data:image\/(png|jpeg|webp|svg\+xml);base64,[a-zA-Z0-9+/=]+$/.test(logo||'');
   return `<div id="gate" style="display:flex"><div class="gateCard">
-    <div class="gateLogo"><div class="mark">${logo?`<img src="${logo}">`:'A+'}</div><div class="name">${nomeClinica||'Agenda+'}</div></div>
-    <h3 class="disp" style="margin:0 0 10px">${titulo}</h3>
+    <div class="gateLogo"><div class="mark">${logoOk?`<img src="${escHtml(logo)}">`:'A+'}</div><div class="name">${escHtml(nomeClinica||'Agenda+')}</div></div>
+    <h3 class="disp" style="margin:0 0 10px">${escHtml(titulo)}</h3>
     ${corpoHTML}
   </div></div>`;
 }
@@ -2600,21 +2669,61 @@ async function renderPublicoAgendar(codigo){
   const cli=await dadosClinicaPublica(codigo);
   if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
   el.innerHTML=publicoShell('Marque sua consulta',`
-    <p class="gateTitle">Preencha seus dados — a recepção confirma o melhor horário com você em seguida.</p>
+    <p class="gateTitle">Preencha seus dados e escolha um horário livre — a recepção confirma a solicitação em seguida.</p>
     <label class="gateLab">Seu nome completo</label><input class="gateInp" id="pbNome">
     <label class="gateLab">WhatsApp</label><input class="gateInp" id="pbTel" placeholder="(11) 99999-9999">
-    <label class="gateLab">Dia desejado</label><input class="gateInp" type="date" id="pbData" min="${hojeISO()}">
-    <label class="gateLab">Horário aproximado</label><input class="gateInp" type="time" id="pbHora">
+    <label class="gateLab">Dia desejado</label><input class="gateInp" type="date" id="pbData" min="${hojeISO()}" onchange="atualizarSlotsPublico('${codigo}')">
+    <label class="gateLab">Horário</label><select class="gateInp" id="pbHora" disabled><option value="">Escolha o dia primeiro</option></select>
     <label class="gateLab">Motivo / observação</label><textarea class="gateInp" id="pbObs" rows="3"></textarea>
     <button class="gateBtn" onclick="enviarSolicitacaoAgendamento('${codigo}')">Enviar solicitação</button>
     <div class="gateError" id="pbErr"></div>
     <div id="pbOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Solicitação enviada! A clínica confirma com você em breve.</div>
   `,cli&&cli.nome,cli&&cli.logo);
 }
+/* Slots de meia em meia hora dentro do horário de funcionamento (HORA_INI/HORA_FIM, já usados na
+   Agenda interna). É uma simplificação: se a clínica tem horários fora da grade de 30min, esses não
+   aparecem aqui — mas cobre o caso comum e nunca deixa marcar em cima de um horário já ocupado. */
+function slotsPublicosDoDia(){
+  const out=[];
+  for(let h=HORA_INI;h<HORA_FIM;h++){ out.push(String(h).padStart(2,'0')+':00'); out.push(String(h).padStart(2,'0')+':30'); }
+  return out;
+}
+async function horariosOcupadosPublicos(codigo,data){
+  if(!data||!sb) return [];
+  try{
+    const {data:ocupados,error}=await sb.rpc('horarios_ocupados_publicos',{codigo_grp:codigo,dia:data});
+    if(error) throw error;
+    return ocupados||[];
+  }catch(e){ return []; }
+}
+async function atualizarSlotsPublico(codigo){
+  const data=$('pbData').value;
+  const sel=$('pbHora'); if(!sel) return;
+  const anterior=sel.value;
+  if(!data){ sel.innerHTML='<option value="">Escolha o dia primeiro</option>'; sel.disabled=true; return; }
+  sel.disabled=true; sel.innerHTML='<option value="">Carregando horários…</option>';
+  const ocupados=await horariosOcupadosPublicos(codigo,data);
+  const slots=slotsPublicosDoDia();
+  sel.innerHTML='<option value="">Escolha um horário</option>'+slots.map(h=>{
+    const ocupado=ocupados.includes(h);
+    return `<option value="${h}" ${ocupado?'disabled':''} ${(!ocupado&&h===anterior)?'selected':''}>${h}${ocupado?' — indisponível':''}</option>`;
+  }).join('');
+  sel.disabled=false;
+}
 async function enviarSolicitacaoAgendamento(codigo){
   const nome=$('pbNome').value.trim(), tel=$('pbTel').value.trim(), data=$('pbData').value, hora=$('pbHora').value, obs=$('pbObs').value.trim();
   const err=$('pbErr'); err.style.display='none';
   if(!nome||!tel){ err.textContent='Preencha nome e WhatsApp.'; err.style.display='block'; return; }
+  if(!data||!hora){ err.textContent='Escolha o dia e o horário.'; err.style.display='block'; return; }
+  /* Checagem de última hora: outra pessoa pode ter marcado esse horário enquanto este formulário
+     estava aberto na tela. Confere de novo bem antes de enviar, pra nunca deixar passar. */
+  const ocupadosAgora=await horariosOcupadosPublicos(codigo,data);
+  if(ocupadosAgora.includes(hora)){
+    err.textContent='Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário.';
+    err.style.display='block';
+    await atualizarSlotsPublico(codigo);
+    return;
+  }
   const r=await publicInsert(codigo,'agendamento',{nome,telefone:tel,data,hora,obs,criadoEm:new Date().toISOString()});
   if(!r.ok&&!r.demo){ err.textContent='Não consegui enviar agora. Tente de novo em instantes.'; err.style.display='block'; return; }
   document.querySelectorAll('#publico .gateInp,#publico .gateBtn').forEach(e=>e.style.display='none');
@@ -2630,14 +2739,14 @@ async function pintarFilaEspera(){
     <div class="panel" style="margin-bottom:16px">
       <div class="panelHead"><h2>Solicitações de agendamento online</h2><span class="tag">${pendentes.length} pendente(s)</span></div>
       ${pendentes.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Dia/horário desejado</th><th>Observação</th><th></th></tr></thead><tbody>
-        ${pendentes.map(s=>`<tr><td>${s.payload.nome}</td><td class="mono">${s.payload.telefone}</td><td>${s.payload.data?fmtData(s.payload.data):'—'} ${s.payload.hora||''}</td><td>${s.payload.obs||'—'}</td>
-          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="aprovarSolicitacaoAgendamento('${s.id}')">Aprovar</button> <button class="iconBtn" onclick="recusarSolicitacaoAgendamento('${s.id}')">🗑</button></td></tr>`).join('')}
+        ${pendentes.map(s=>`<tr><td>${escHtml(s.payload.nome)}</td><td class="mono">${escHtml(s.payload.telefone)}</td><td>${s.payload.data?fmtData(s.payload.data):'—'} ${escHtml(s.payload.hora)}</td><td>${escHtml(s.payload.obs)||'—'}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="aprovarSolicitacaoAgendamento('${escJsAttr(s.id)}')">Aprovar</button> <button class="iconBtn" onclick="recusarSolicitacaoAgendamento('${escJsAttr(s.id)}')">🗑</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Nenhuma solicitação pendente.</div>`}
     </div>
     <div class="panel">
       <div class="panelHead"><h2>Fila de espera (encaixe)</h2><button class="btn sm" onclick="abrirModalFila()">+ Adicionar</button></div>
       ${filaEsperaData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Preferência</th><th></th></tr></thead><tbody>
-        ${filaEsperaData.map(f=>`<tr><td>${f.pacienteNome}</td><td>${f.preferencia||'—'}</td>
+        ${filaEsperaData.map(f=>`<tr><td>${escHtml(f.pacienteNome)}</td><td>${escHtml(f.preferencia)||'—'}</td>
           <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="notificarFila('${f.id}')">Notificar vaga</button> <button class="iconBtn" onclick="removerDaFila('${f.id}')">🗑</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Ninguém na fila de espera.</div>`}
     </div>`;
@@ -2645,12 +2754,22 @@ async function pintarFilaEspera(){
 async function aprovarSolicitacaoAgendamento(id){
   const lista=await loadSolicitacoes('agendamento');
   const s=lista.find(x=>x.id===id); if(!s) return;
+  const dataDesejada=s.payload.data||hojeISO(), horaDesejada=s.payload.hora||'09:00';
+  /* Reconfere contra a agenda de verdade (não confia só no que a página pública viu na hora do
+     envio) — pode ter passado tempo entre o pedido e a aprovação, e outra solicitação/encaixe pode
+     ter ocupado esse horário nesse meio-tempo. Nunca cria em cima de um horário já tomado. */
+  agendaData=await loadList('agendamentos');
+  const conflito=agendaData.some(a=>a.data===dataDesejada&&a.hora===horaDesejada&&a.status!=='cancelado');
+  if(conflito){
+    showToast(`Esse horário (${fmtData(dataDesejada)} ${horaDesejada}) já está ocupado na agenda. Abra a solicitação e escolha outro horário antes de aprovar.`,'err');
+    return;
+  }
   let pac=agendaPacientes.find(p=>soDigitos(p.telefone)===soDigitos(s.payload.telefone));
   if(!pac){
     pac={id:uid(),nome:s.payload.nome,telefone:s.payload.telefone,nascimento:'',obs:'Cadastrado via agendamento online.'};
     agendaPacientes.push(pac); await saveList('pacientes',agendaPacientes);
   }
-  const novo={id:uid(),pacienteId:pac.id,pacienteNome:pac.nome,telefone:pac.telefone,data:s.payload.data||hojeISO(),hora:s.payload.hora||'09:00',
+  const novo={id:uid(),pacienteId:pac.id,pacienteNome:pac.nome,telefone:pac.telefone,data:dataDesejada,hora:horaDesejada,
     tipo:'Solicitado online',profissional:'',obs:s.payload.obs||'',status:'agendado',baixaFeita:false};
   agendaData.push(novo); await saveList('agendamentos',agendaData);
   await atualizarSolicitacao(id,'aprovada');
@@ -2666,7 +2785,7 @@ function abrirModalFila(){
   openModal(`
     <div class="modalHead"><h3>Adicionar à fila de espera</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Paciente</label><select id="flPaciente">${agendaPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="flPaciente">${agendaPacientes.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="field"><label>Preferência (dia/período)</label><input id="flPref" placeholder="Ex: qualquer manhã esta semana"></div>
     </div>
     <div class="modalFoot"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="salvarFila()">Adicionar</button></div>
@@ -2725,7 +2844,7 @@ async function renderPublicoConsentir(token){
     <label class="gateLab">Assinatura (desenhe com o dedo)</label>
     <canvas id="assinaturaCanvas" style="width:100%;height:150px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;display:block"></canvas>
     <button class="btn sm" style="margin-top:8px" onclick="limparAssinatura()">Limpar</button>
-    <button class="gateBtn" style="margin-top:14px" onclick="enviarConsentimentoPublico('${registro.grp}','${registro.paciente_id}',${JSON.stringify(token)})">Confirmar autorização</button>
+    <button class="gateBtn" id="pcSubmitBtn" style="margin-top:14px" onclick="enviarConsentimentoPublico('${registro.grp}','${registro.paciente_id}',${JSON.stringify(token)})">Confirmar autorização</button>
     <div class="gateError" id="pcErr"></div>
     <div id="pcOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Assinatura enviada! A clínica confirma o recebimento em breve.</div>
   `,cli&&cli.nome,cli&&cli.logo);
@@ -2737,11 +2856,28 @@ async function enviarConsentimentoPublico(grp,pacienteId,token){
   if(!nome){ err.textContent='Digite seu nome completo.'; err.style.display='block'; return; }
   if(!$('pcCheck').checked){ err.textContent='Confirme que leu e concorda com o termo.'; err.style.display='block'; return; }
   if(!assinaturaTemTraco){ err.textContent='Assine no campo acima antes de confirmar.'; err.style.display='block'; return; }
-  const cv=$('assinaturaCanvas');
-  const r=await publicInsert(grp,'consentimento_lgpd',{pacienteId,nome,assinaturaData:cv.toDataURL('image/png'),dataHora:new Date().toISOString()});
-  if(!r.ok){ err.textContent='Não consegui enviar agora. Tente de novo em instantes.'; err.style.display='block'; return; }
-  document.querySelectorAll('#publico .gateInp,#publico .gateBtn,#publico canvas,#publico label').forEach(e=>e.style.display='none');
-  $('pcOk').style.display='block';
+  const btn=$('pcSubmitBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
+  /* Envolvido em try/catch de propósito: antes, qualquer erro inesperado aqui (rede, canvas,
+     Supabase) travava a tela sem nenhum aviso — parecia que o botão "não fazia nada". Agora todo
+     erro aparece pro paciente (e dá pra tentar de novo) em vez de falhar em silêncio. */
+  try{
+    const cv=$('assinaturaCanvas');
+    const r=await publicInsert(grp,'consentimento_lgpd',{pacienteId,nome,assinaturaData:cv.toDataURL('image/png'),dataHora:new Date().toISOString()});
+    if(!r.ok){
+      err.textContent='Não consegui enviar agora'+(r.erro?' ('+r.erro+')':'')+'. Tente de novo em instantes.';
+      err.style.display='block';
+      if(btn){ btn.disabled=false; btn.textContent='Confirmar autorização'; }
+      return;
+    }
+    document.querySelectorAll('#publico .gateInp,#publico .gateBtn,#publico canvas,#publico label').forEach(e=>e.style.display='none');
+    $('pcOk').style.display='block';
+  }catch(e){
+    console.error('Falha ao confirmar consentimento:',e);
+    err.textContent='Ocorreu um erro inesperado ao enviar'+(e&&e.message?': '+e.message:'')+'. Tente novamente.';
+    err.style.display='block';
+    if(btn){ btn.disabled=false; btn.textContent='Confirmar autorização'; }
+  }
 }
 async function gerarLinkConsentimento(pacienteId,pacienteNome){
   if(demoMode||!sb){ showToast('Isso precisa do Supabase conectado.','err'); return; }
@@ -2750,6 +2886,15 @@ async function gerarLinkConsentimento(pacienteId,pacienteNome){
   const token=await publicarPortalPaciente(pacienteId,{tipo:'consentimento',pacienteNome,clinicaNome:cfg.nomeExibicao||clinicaNome,termo},15);
   const url=new URL(location.href); url.search=''; url.searchParams.set('public','consentir'); url.searchParams.set('token',token);
   return url.toString();
+}
+async function enviarLinkConsentimentoWhats(pacienteId){
+  const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
+  if(!p.telefone){ showToast('Este paciente não tem telefone cadastrado. Cadastre ou copie o link manualmente.','err'); return; }
+  const link=await gerarLinkConsentimento(pacienteId,p.nome);
+  if(!link) return;
+  const msg=`Olá, ${p.nome}! Para continuarmos seu atendimento, confirme a autorização de uso dos seus dados de saúde (LGPD) neste link: ${link}\n\nLeva menos de um minuto.`;
+  window.open(waLink(p.telefone,msg),'_blank');
+  await registrarAuditoria('Gerou link de assinatura LGPD (WhatsApp)',p.nome);
 }
 async function enviarLinkConsentimentoEmail(pacienteId){
   const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
@@ -2859,8 +3004,8 @@ async function renderRelatorios(){
   }]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
 
   const mesAtualComissao=hojeISO().slice(0,7);
-  const custoProc=p=>(p.itens||[]).reduce((s,it)=>{ const e=estoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
-  const precoProc=p=>{ const c=custoProc(p); const m=Number(p.margem||0); return p.precoManual||((m>0&&m<100)?c/(1-m/100):c); };
+  const custoProc=p=>custoInsumosProcedimento(p,estoque);
+  const precoProc=p=>precoFinalProcedimento(p,estoque);
   const porProf={};
   agend.filter(a=>a.status==='atendido'&&a.data.slice(0,7)===mesAtualComissao&&a.procedimentoId).forEach(a=>{
     const proc=procs.find(p=>p.id===a.procedimentoId); if(!proc||!proc.comissaoPct) return;
