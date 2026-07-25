@@ -927,7 +927,8 @@ function statusLabel(s){
 /* ================= AGENDA ================= */
 let agendaData=[]; let agendaPacientes=[]; let agendaSelDia=hojeISO(); let agendaMesRef=new Date(); let agendaProcedimentos=[]; let agendaEstoque=[];
 function custoProcedimentoAgenda(p){ return custoInsumosProcedimento(p,agendaEstoque); }
-function precoSugeridoAgenda(p){ return precoFinalProcedimento(p,agendaEstoque); }
+function precoSugeridoAgenda(p){ return precoSugeridoProcedimento(custoProcedimentoAgenda(p),Number(p.margem||0)); }
+function precoFinalAgenda(p){ return precoFinalProcedimento(p,agendaEstoque); }
 const HORA_INI=7, HORA_FIM=20;
 
 let agendaSubTab='calendario';
@@ -1004,13 +1005,13 @@ async function marcarStatusRapido(id,novoStatus){
 }
 function apptCardHTML(a){
   const lembreteIcon={enviado:'✅',aberto:'📤',falhou:'⚠️'}[a.lembreteStatus]||'';
-  return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${a.id}')">
+  return `<div class="apptCard ${a.status}" onclick="abrirModalAgendamento('${escJsAttr(a.id)}')">
     <div><div class="who">${escHtml(a.pacienteNome)}</div><div class="what">${escHtml(a.tipo||'Consulta')}${a.profissional?' · '+escHtml(a.profissional):''} · ${escHtml(a.hora)}${lembreteIcon?` <span title="Lembrete: ${escHtml(a.lembreteStatus)} em ${fmtDataHora(a.lembreteEm)}">${lembreteIcon}</span>`:''}</div></div>
     <div class="apptActs">
-      ${(a.status==='agendado'||a.status==='confirmado')?`<button class="iconBtn" title="Marcar atendido" onclick="event.stopPropagation();marcarStatusRapido('${a.id}','atendido')" style="font-size:17px">✓</button>`:''}
-      <button class="iconBtn" title="Teleconsulta" onclick="event.stopPropagation();iniciarTeleconsulta('${a.id}')">🎥</button>
-      <button class="iconBtn" title="Lembrete WhatsApp" onclick="event.stopPropagation();lembreteWhats('${a.id}')">💬</button>
-      ${a.status==='atendido'?`<button class="iconBtn" title="Pedir avaliação (NPS)" onclick="event.stopPropagation();pedirAvaliacao('${a.id}')">⭐</button>`:''}
+      ${(a.status==='agendado'||a.status==='confirmado')?`<button class="iconBtn" title="Marcar atendido" onclick="event.stopPropagation();marcarStatusRapido('${escJsAttr(a.id)}','atendido')" style="font-size:17px">✓</button>`:''}
+      <button class="iconBtn" title="Teleconsulta" onclick="event.stopPropagation();iniciarTeleconsulta('${escJsAttr(a.id)}')">🎥</button>
+      <button class="iconBtn" title="Lembrete WhatsApp" onclick="event.stopPropagation();lembreteWhats('${escJsAttr(a.id)}')">💬</button>
+      ${a.status==='atendido'?`<button class="iconBtn" title="Pedir avaliação (NPS)" onclick="event.stopPropagation();pedirAvaliacao('${escJsAttr(a.id)}')">⭐</button>`:''}
     </div>
   </div>`;
 }
@@ -1031,14 +1032,14 @@ function compartilharLinkTeleconsulta(id){
 }
 function abrirModalAgendamento(id){
   const a=id?agendaData.find(x=>x.id===id):null;
-  const pacOpts=agendaPacientes.map(p=>`<option value="${escHtml(p.id)}" ${a&&a.pacienteId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('');
+  const pacOpts=agendaPacientes.map(p=>`<option value="${escJsAttr(p.id)}" ${a&&a.pacienteId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('');
   openModal(`
     <div class="modalHead"><h3>${a?'Editar agendamento':'Novo agendamento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
       <div class="field"><label>Paciente</label><select id="fPaciente">${pacOpts||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="formRow">
-        <div class="field"><label>Data</label><input type="date" id="fData" value="${escHtml(a?a.data:agendaSelDia)}"></div>
-        <div class="field"><label>Horário</label><input type="time" id="fHora" value="${escHtml(a?a.hora:'09:00')}"></div>
+        <div class="field"><label>Data</label><input type="date" id="fData" value="${a?escHtml(a.data):agendaSelDia}"></div>
+        <div class="field"><label>Horário</label><input type="time" id="fHora" value="${a?escHtml(a.hora):'09:00'}"></div>
       </div>
       <div class="formRow">
         <div class="field"><label>Tipo</label><input id="fTipo" placeholder="Consulta, retorno, avaliação…" value="${a?escHtml(a.tipo||''):''}"></div>
@@ -1047,7 +1048,7 @@ function abrirModalAgendamento(id){
       <div class="field"><label>Procedimento (opcional — baixa o estoque e lança o financeiro sozinho ao marcar "Atendido")</label>
         <select id="fProcedimento">
           <option value="">Nenhum / lançar manualmente</option>
-          ${agendaProcedimentos.map(p=>`<option value="${escHtml(p.id)}" ${a&&a.procedimentoId===p.id?'selected':''}>${escHtml(p.nome)} — ${BRL(precoSugeridoAgenda(p))}</option>`).join('')}
+          ${agendaProcedimentos.map(p=>`<option value="${escJsAttr(p.id)}" ${a&&a.procedimentoId===p.id?'selected':''}>${escHtml(p.nome)} — ${BRL(precoFinalAgenda(p))}</option>`).join('')}
         </select>
       </div>
       <div class="field"><label>Observações</label><textarea id="fObs" rows="2">${a?escHtml(a.obs||''):''}</textarea></div>
@@ -1058,15 +1059,15 @@ function abrirModalAgendamento(id){
         ${['agendado','confirmado','atendido','faltou','cancelado'].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
       </select></div>`:''}
       ${a&&a.teleconsulta?`<div class="field"><label>Link da teleconsulta</label>
-        <div style="display:flex;gap:6px"><input class="mono" readonly value="${linkTeleconsulta(a)}" onclick="this.select()" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
-        <button class="btn sm" onclick="iniciarTeleconsulta('${a.id}')">Entrar</button>
-        <button class="btn sm" onclick="compartilharLinkTeleconsulta('${a.id}')">Enviar</button></div>
+        <div style="display:flex;gap:6px"><input class="mono" readonly value="${escHtml(linkTeleconsulta(a))}" onclick="this.select()" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
+        <button class="btn sm" onclick="iniciarTeleconsulta('${escJsAttr(a.id)}')">Entrar</button>
+        <button class="btn sm" onclick="compartilharLinkTeleconsulta('${escJsAttr(a.id)}')">Enviar</button></div>
       </div>`:''}
     </div>
     <div class="modalFoot">
-      ${a?`<button class="btn danger" onclick="excluirAgendamento('${a.id}')">Excluir</button>`:''}
+      ${a?`<button class="btn danger" onclick="excluirAgendamento('${escJsAttr(a.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarAgendamento(${a?`'${a.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarAgendamento(${a?`'${escJsAttr(a.id)}'`:'null'})">Salvar</button>
     </div>
   `);
 }
@@ -1116,7 +1117,7 @@ async function processarProcedimentoNaConsulta(a){
   });
   if(precisaSalvarEstoque) await saveList('estoque',agendaEstoque);
   const custo=custoProcedimentoAgenda(proc);
-  const preco=precoSugeridoAgenda(proc);
+  const preco=proc.precoManual||precoSugeridoAgenda(proc);
   const lanc=await loadList('lancamentos');
   lanc.push({id:uid(),tipo:'receita',valor:preco,descricao:proc.nome+' — '+a.pacienteNome,categoria:'Procedimento',data:a.data,natureza:'operacional',origem:'procedimento',agendamentoId:a.id});
   if(custo>0) lanc.push({id:uid(),tipo:'despesa',valor:custo,descricao:'Insumos: '+proc.nome+' — '+a.pacienteNome,categoria:'Insumos (CMV)',data:a.data,natureza:'cmv',origem:'procedimento',agendamentoId:a.id});
@@ -1181,15 +1182,14 @@ async function pintarAssinaturasPendentes(){
     <div class="panelHead"><h2>Assinaturas recebidas — aguardando aprovação</h2><span class="tag">${solicitacoes.length}</span></div>
     ${solicitacoes.map(s=>{
       const p=pacientesData.find(x=>x.id===s.payload.pacienteId);
-      const assinaturaOk=/^data:image\/(png|jpeg);base64,[a-zA-Z0-9+/=]+$/.test(s.payload.assinaturaData||'');
       return `<div style="display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line-soft)">
-        ${assinaturaOk?`<img src="${escHtml(s.payload.assinaturaData)}" style="width:100px;height:44px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">`:`<div style="width:100px;height:44px;border:1px solid var(--line);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gray)">assinatura inválida</div>`}
+        <img src="${s.payload.assinaturaData}" style="width:100px;height:44px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">
         <div style="flex:1">
-          <b style="font-size:13.5px">${escHtml(s.payload.nome)}</b>${p?'':' <span class="badge faltou">Paciente não encontrado</span>'}
-          <div style="font-size:12px;color:var(--ink-soft)">Assinado em ${fmtDataHora(s.payload.dataHora)}${p?' · para: '+escHtml(p.nome):''}</div>
+          <b style="font-size:13.5px">${s.payload.nome}</b>${p?'':' <span class="badge faltou">Paciente não encontrado</span>'}
+          <div style="font-size:12px;color:var(--ink-soft)">Assinado em ${fmtDataHora(s.payload.dataHora)}${p?' · para: '+p.nome:''}</div>
         </div>
-        ${p?`<button class="btn sm primary" onclick="aprovarConsentimentoPublico('${escJsAttr(s.id)}')">Aprovar</button>`:''}
-        <button class="iconBtn" onclick="excluirSolicitacao('${escJsAttr(s.id)}');pintarAssinaturasPendentes()">🗑</button>
+        ${p?`<button class="btn sm primary" onclick="aprovarConsentimentoPublico('${s.id}')">Aprovar</button>`:''}
+        <button class="iconBtn" onclick="excluirSolicitacao('${s.id}');pintarAssinaturasPendentes()">🗑</button>
       </div>`;
     }).join('')}
   </div>`;
@@ -1296,10 +1296,57 @@ function pintarPacientes(){
     </div>`;
   pintarAssinaturasPendentes();
 }
+/* ---- Financeiro + procedimentos do paciente (aparece na ficha ao editar) ---- */
+function historicoPacienteHTML(p,dados){
+  const {lancamentos,contas,agendamentos,procedimentos,estoque}=dados;
+  const contasPaciente=contas.filter(c=>c.pacienteId===p.id);
+  const lancPaciente=lancamentos.filter(l=>l.pacienteId===p.id);
+  const hoje=hojeISO();
+  const pendentes=contasPaciente.filter(c=>c.tipo==='receber'&&c.status!=='pago');
+  const atrasadas=pendentes.filter(c=>c.vencimento<hoje);
+  const totalPendente=pendentes.reduce((s,c)=>s+Number(c.valor||0),0);
+  const totalRecebido=lancPaciente.filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor||0),0);
+  const situacao=atrasadas.length?{label:'Inadimplente',cls:'faltou'}:(pendentes.length?{label:'Pendente',cls:'agendado'}:((contasPaciente.length||lancPaciente.length)?{label:'Em dia',cls:'confirmado'}:null));
+  const atendimentos=agendamentos.filter(a=>a.pacienteId===p.id&&a.status==='atendido').sort((a,b)=>b.data.localeCompare(a.data));
+  return `<div class="card" style="background:var(--paper2);border:none;padding:12px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-weight:600;font-size:13px">Financeiro do paciente</div>
+      ${situacao?`<span class="badge ${situacao.cls}">${situacao.label}</span>`:''}
+    </div>
+    ${(contasPaciente.length||lancPaciente.length)?`
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px">Recebido: <b class="mono">${BRL(totalRecebido)}</b>${pendentes.length?` · Em aberto: <b class="mono" style="color:var(--coral)">${BRL(totalPendente)}</b> (${pendentes.length})`:''}</div>
+    ${pendentes.length?`<div style="margin-bottom:4px">${pendentes.map(c=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--line-soft)">
+      <span>${escHtml(c.descricao)}${c.vencimento<hoje?' <span style="color:var(--coral)">(atrasada)</span>':''}</span>
+      <span class="mono">${BRL(c.valor)} · ${fmtData(c.vencimento)}</span>
+    </div>`).join('')}</div>`:''}
+    `:`<p style="font-size:12px;color:var(--gray);margin:0 0 8px">Nenhum lançamento/conta vinculada ainda. Vincule ao paciente ao criar um lançamento ou conta em Financeiro.</p>`}
+    <button type="button" class="btn sm" onclick="goTab('financeiro')">Ver financeiro completo</button>
+  </div>
+  <div class="card" style="background:var(--paper2);border:none;padding:12px;margin-bottom:14px">
+    <div style="font-weight:600;font-size:13px;margin-bottom:8px">Procedimentos realizados</div>
+    ${atendimentos.length?atendimentos.map(a=>{
+      const proc=procedimentos.find(x=>x.id===a.procedimentoId);
+      const valor=proc?precoFinalProcedimento(proc,estoque):null;
+      return `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line-soft)">
+        <span>${fmtData(a.data)} — ${escHtml(proc?proc.nome:(a.tipo||'Consulta'))}</span>
+        <span class="mono">${valor!=null?BRL(valor):'—'}</span>
+      </div>`;
+    }).join(''):`<p style="font-size:12px;color:var(--gray);margin:0">Nenhum atendimento concluído registrado ainda.</p>`}
+  </div>`;
+}
 async function abrirModalPaciente(id){
   const p=id?pacientesData.find(x=>x.id===id):null;
   const cfg=await loadConfigClinica();
   if(!conveniosData.length){ try{ conveniosData=await loadList('convenios'); }catch(e){} }
+  let historicoHTML='';
+  if(p){
+    try{
+      const [lancamentos,contas,agendamentos,procedimentos,estoque]=await Promise.all([
+        loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('estoque')
+      ]);
+      historicoHTML=historicoPacienteHTML(p,{lancamentos,contas,agendamentos,procedimentos,estoque});
+    }catch(e){ historicoHTML=''; }
+  }
   openModal(`
     <div class="modalHead"><h3>${p?'Editar paciente':'Novo paciente'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
@@ -1337,6 +1384,7 @@ async function abrirModalPaciente(id){
         <div class="field"><label>Nº da carteirinha</label><input id="pCarteirinha" placeholder="0000000000" value="${p?escHtml(p.carteirinha||''):''}"></div>
       </div>
       <div class="field"><label>Observações / histórico</label><textarea id="pObs" rows="3">${p?escHtml(p.obs||''):''}</textarea></div>
+      ${historicoHTML}
       ${p ? renderConsentimentoBox(p,cfg) : `<p style="font-size:12px;color:var(--gray)">Depois de salvar, você poderá registrar o consentimento LGPD deste paciente.</p>`}
     </div>
     <div class="modalFoot">
@@ -1464,7 +1512,7 @@ function pintarProntuario(p){
         <div class="field"><label>Data</label><input type="date" id="evData" value="${hojeISO()}"></div>
         <div class="field"><label>Modelo (opcional)</label><select id="evModelo" onchange="aplicarModeloEvolucao(this.value)">
           <option value="">Em branco</option>
-          ${modelosDisponiveis().map(m=>`<option value="${escHtml(m.id)}">${escHtml(m.nome)} (${escHtml(m.especialidade)})</option>`).join('')}
+          ${modelosDisponiveis().map(m=>`<option value="${escJsAttr(m.id)}">${escHtml(m.nome)} (${escHtml(m.especialidade)})</option>`).join('')}
         </select></div>
       </div>
       ${ehFisio?`<div class="formRow">
@@ -1473,7 +1521,7 @@ function pintarProntuario(p){
       </div>`:''}
       ${ehNutri?`<div class="formRow">
         <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="evPeso" placeholder="Ex: 72.5"></div>
-        <div class="field"><label>Altura (cm)</label><input type="number" id="evAltura" placeholder="Ex: 170" value="${p.alturaCm||''}"></div>
+        <div class="field"><label>Altura (cm)</label><input type="number" id="evAltura" placeholder="Ex: 170" value="${escHtml(p.alturaCm||'')}"></div>
       </div>`:''}
       <div class="field"><label>Anexo (opcional)</label><input type="file" id="evAnexo" accept="image/*,.pdf"></div>
       <div class="field"><label>Evolução / anotação da consulta</label><textarea id="evTexto" rows="5" placeholder="Queixa, exame, conduta, prescrição…"></textarea></div>
@@ -1491,7 +1539,7 @@ function pintarProntuario(p){
             ${(e.dor!=null||e.amplitude!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Dor: ${escHtml(e.dor??'—')}/10 · Amplitude: ${escHtml(e.amplitude??'—')}°</div>`:''}
             ${(e.pesoKg!=null)?`<div style="font-size:12px;color:var(--ink-soft);margin-top:2px">Peso: ${escHtml(e.pesoKg)}kg${e.imc?` · IMC: ${escHtml(e.imc)}`:''}</div>`:''}
             <div style="font-size:13px;margin-top:4px;white-space:pre-wrap">${escHtml(e.texto||'')}</div>
-            ${e.anexoNome&&/^data:(image\/(png|jpeg|gif|webp)|application\/pdf);base64,[a-zA-Z0-9+/=]+$/.test(e.anexoData||'')?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${escHtml(e.anexoData)}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${escHtml(e.anexoData)}" download="${escHtml(e.anexoNome)}" class="tag">📎 ${escHtml(e.anexoNome)}</a>`}</div>`:''}
+            ${e.anexoNome&&/^data:image\/(png|jpe?g|gif|webp);base64,[a-zA-Z0-9+/]+=*$/.test(e.anexoData||'')?`<div style="margin-top:6px">${/\.(png|jpe?g|gif|webp)$/i.test(e.anexoNome)?`<img src="${e.anexoData}" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid var(--line)">`:`<a href="${e.anexoData}" download="${escHtml(e.anexoNome)}" class="tag">📎 ${escHtml(e.anexoNome)}</a>`}</div>`:(e.anexoNome?`<div style="margin-top:6px" class="tag">📎 ${escHtml(e.anexoNome)}</div>`:'')}
           </div>`).join('') : `<div class="empty">Nenhuma evolução registrada ainda.</div>`}
       </div>
     </div>
@@ -1820,12 +1868,13 @@ async function anonimizarPaciente(id){
 <script>
 /* ================= FINANCEIRO ================= */
 let lancData=[]; let contasData=[]; let financeiroMes=hojeISO().slice(0,7); let financeiroSubTab='lancamentos';
-let comissaoAgend=[], comissaoProc=[], comissaoEstoque=[], planosRecorrentesData=[];
+let comissaoAgend=[], comissaoProc=[], planosRecorrentesData=[];
+let finPacientes=[], finEstoque=[];
 async function renderFinanceiro(){
   $('topbarActs').innerHTML='';
   $('content').innerHTML='<div class="empty">Carregando…</div>';
-  [lancData,contasData,comissaoAgend,comissaoProc,comissaoEstoque,planosRecorrentesData]=await Promise.all([
-    loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('estoque'),loadList('planosRecorrentes')
+  [lancData,contasData,comissaoAgend,comissaoProc,finEstoque,planosRecorrentesData,finPacientes]=await Promise.all([
+    loadList('lancamentos'),loadList('contas'),loadList('agendamentos'),loadList('procedimentos'),loadList('estoque'),loadList('planosRecorrentes'),loadList('pacientes')
   ]);
   pintarFinanceiro();
 }
@@ -1860,8 +1909,8 @@ function pintarFinanceiro(){
           <td><span class="badge ${l.tipo==='receita'?'confirmado':'cancelado'}">${l.tipo==='receita'?'Receita':'Despesa'}</span></td>
           <td class="mono">${BRL(l.valor)}</td>
           <td style="text-align:right;white-space:nowrap">
-            ${l.tipo==='receita'?`<button class="iconBtn" title="Gerar cobrança (Pix/cartão)" onclick="gerarCobranca('${l.id}')">💳</button><button class="iconBtn" title="Emitir NFS-e" onclick="emitirNfse('${l.id}')">🧾</button>`:''}
-            <button class="iconBtn" onclick="abrirModalLancamento('${l.id}')">✎</button>
+            ${l.tipo==='receita'?`<button class="iconBtn" title="Gerar cobrança (Pix/cartão)" onclick="gerarCobranca('${escJsAttr(l.id)}')">💳</button><button class="iconBtn" title="Emitir NFS-e" onclick="emitirNfse('${escJsAttr(l.id)}')">🧾</button>`:''}
+            <button class="iconBtn" onclick="abrirModalLancamento('${escJsAttr(l.id)}')">✎</button>
           </td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum lançamento neste mês</div>Registre o que a clínica recebeu e gastou.</div>`}
     </div>`;
@@ -1893,7 +1942,7 @@ function pintarComissoes(){
   const porProfissional={};
   doMes.forEach(a=>{
     const proc=comissaoProc.find(p=>p.id===a.procedimentoId); if(!proc) return;
-    const preco=precoFinalProcedimento(proc,comissaoEstoque);
+    const preco=precoFinalProcedimento(proc,finEstoque);
     const pct=Number(proc.comissaoPct||0); if(!pct) return;
     const valorComissao=preco*pct/100;
     const prof=a.profissional||'(sem profissional definido)';
@@ -1915,8 +1964,8 @@ function pintarRecorrencia(){
     <div class="toolbar"><span style="flex:1"></span><button class="btn primary sm" onclick="abrirModalPlano()">+ Plano</button></div>
     <div class="panel">
       ${planosRecorrentesData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Valor</th><th>Periodicidade</th><th>Próxima cobrança</th><th></th></tr></thead><tbody>
-        ${planosRecorrentesData.map(p=>`<tr><td>${p.pacienteNome}</td><td class="mono">${BRL(p.valor)}</td><td>${p.periodicidade==='semanal'?'Semanal':'Mensal'}</td><td>${fmtData(p.proximaCobranca)}</td>
-          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="gerarCobrancaPlano('${p.id}')">Gerar cobrança</button> <button class="iconBtn" onclick="excluirPlano('${p.id}')">🗑</button></td></tr>`).join('')}
+        ${planosRecorrentesData.map(p=>`<tr><td>${escHtml(p.pacienteNome)}</td><td class="mono">${BRL(p.valor)}</td><td>${p.periodicidade==='semanal'?'Semanal':'Mensal'}</td><td>${fmtData(p.proximaCobranca)}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="gerarCobrancaPlano('${escJsAttr(p.id)}')">Gerar cobrança</button> <button class="iconBtn" onclick="excluirPlano('${escJsAttr(p.id)}')">🗑</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum plano cadastrado</div>Pra pacientes com cobrança fixa recorrente (mensalidade, pacote de sessões).</div>`}
     </div>`;
 }
@@ -1926,7 +1975,7 @@ async function abrirModalPlano(){
   openModal(`
     <div class="modalHead"><h3>Novo plano recorrente</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Paciente</label><select id="plPaciente">${planoPacientesOpts.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="plPaciente">${planoPacientesOpts.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="formRow">
         <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="plValor"></div>
         <div class="field"><label>Periodicidade</label><select id="plPeriodicidade"><option value="mensal">Mensal</option><option value="semanal">Semanal</option></select></div>
@@ -1946,7 +1995,7 @@ async function salvarPlano(){
 }
 async function gerarCobrancaPlano(id){
   const p=planosRecorrentesData.find(x=>x.id===id); if(!p) return;
-  contasData.push({id:uid(),tipo:'receber',descricao:'Plano — '+p.pacienteNome,valor:p.valor,vencimento:p.proximaCobranca,status:'pendente'});
+  contasData.push({id:uid(),tipo:'receber',descricao:'Plano — '+p.pacienteNome,pacienteId:p.pacienteId||null,valor:p.valor,vencimento:p.proximaCobranca,status:'pendente'});
   await saveList('contas',contasData);
   const d=new Date(p.proximaCobranca+'T00:00:00');
   if(p.periodicidade==='semanal') d.setDate(d.getDate()+7); else d.setMonth(d.getMonth()+1);
@@ -1983,6 +2032,12 @@ function abrirModalLancamento(id){
         <div class="field"><label>Categoria</label><input id="lCat" placeholder="Consulta, aluguel, material…" value="${l?escHtml(l.categoria||''):''}"></div>
         <div class="field"><label>Data</label><input type="date" id="lData" value="${l?escHtml(l.data):hojeISO()}"></div>
       </div>
+      <div class="field"><label>Paciente vinculado (opcional)</label><select id="lPaciente">
+        <option value="">Nenhum / não se aplica</option>
+        ${finPacientes.map(p=>`<option value="${escHtml(p.id)}" ${l&&l.pacienteId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('')}
+      </select>
+        <p style="font-size:11px;color:var(--gray);margin:4px 0 0">Vincular ajuda a ver o histórico financeiro dele na ficha do paciente (adimplência, o que já pagou).</p>
+      </div>
       <div class="field"><label>Natureza (pro DRE)</label><select id="lNatureza">
         <option value="fixa" ${l&&l.natureza==='fixa'?'selected':''}>Despesa fixa (aluguel, salário fixo…)</option>
         <option value="variavel" ${!l||l.natureza==='variavel'?'selected':''}>Variável / receita normal</option>
@@ -1998,7 +2053,7 @@ function abrirModalLancamento(id){
 async function salvarLancamento(id){
   const valor=parseFloat($('lValor').value), desc=$('lDesc').value.trim();
   if(!valor||!desc){showToast('Preencha descrição e valor.','err');return;}
-  const obj={id:id||uid(),tipo:$('lTipo').value,valor,descricao:desc,categoria:$('lCat').value.trim(),data:$('lData').value,natureza:$('lNatureza').value};
+  const obj={id:id||uid(),tipo:$('lTipo').value,valor,descricao:desc,categoria:$('lCat').value.trim(),data:$('lData').value,natureza:$('lNatureza').value,pacienteId:$('lPaciente')?($('lPaciente').value||null):null};
   const idx=lancData.findIndex(x=>x.id===obj.id);
   if(idx>=0) lancData[idx]=obj; else lancData.push(obj);
   await saveList('lancamentos',lancData);
@@ -2032,12 +2087,12 @@ function pintarContas(){
       ${pendentes.length?`<table class="tbl"><thead><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th></th></tr></thead><tbody>
         ${pendentes.map(c=>{
           const atrasada=c.vencimento<hoje;
-          return `<tr><td class="${atrasada?'stockLow':''}">${fmtData(c.vencimento)}${atrasada?' · atrasada':''}</td><td>${c.descricao}</td>
+          return `<tr><td class="${atrasada?'stockLow':''}">${fmtData(c.vencimento)}${atrasada?' · atrasada':''}</td><td>${escHtml(c.descricao)}</td>
           <td><span class="badge ${c.tipo==='receber'?'confirmado':'faltou'}">${c.tipo==='receber'?'A receber':'A pagar'}</span></td>
           <td class="mono">${BRL(c.valor)}</td>
           <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
-            <button class="btn sm" onclick="marcarContaPaga('${c.id}')">${c.tipo==='receber'?'Marcar recebida':'Marcar paga'}</button>
-            <button class="iconBtn" onclick="abrirModalConta('${c.id}')">✎</button>
+            <button class="btn sm" onclick="marcarContaPaga('${escJsAttr(c.id)}')">${c.tipo==='receber'?'Marcar recebida':'Marcar paga'}</button>
+            <button class="iconBtn" onclick="abrirModalConta('${escJsAttr(c.id)}')">✎</button>
           </td></tr>`;
         }).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhuma conta pendente</div>Cadastre contas a pagar ou a receber com data de vencimento.</div>`}
@@ -2045,7 +2100,7 @@ function pintarContas(){
     <div class="panel" style="margin-top:16px">
       <div class="panelHead"><h2>Últimas quitadas</h2></div>
       ${pagas.length?`<table class="tbl"><thead><tr><th>Vencimento</th><th>Descrição</th><th>Tipo</th><th>Valor</th></tr></thead><tbody>
-        ${pagas.map(c=>`<tr><td>${fmtData(c.vencimento)}</td><td>${c.descricao}</td><td>${c.tipo==='receber'?'Recebida':'Paga'}</td><td class="mono">${BRL(c.valor)}</td></tr>`).join('')}
+        ${pagas.map(c=>`<tr><td>${fmtData(c.vencimento)}</td><td>${escHtml(c.descricao)}</td><td>${c.tipo==='receber'?'Recebida':'Paga'}</td><td class="mono">${BRL(c.valor)}</td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Nenhuma conta quitada ainda.</div>`}
     </div>`;
 }
@@ -2055,23 +2110,27 @@ function abrirModalConta(id){
     <div class="modalHead"><h3>${c?'Editar conta':'Nova conta'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
       <div class="field"><label>Tipo</label><select id="cTipo"><option value="pagar" ${c&&c.tipo==='pagar'?'selected':''}>A pagar</option><option value="receber" ${c&&c.tipo==='receber'?'selected':''}>A receber</option></select></div>
-      <div class="field"><label>Descrição</label><input id="cDesc" placeholder="Ex: Aluguel de agosto" value="${c?c.descricao:''}"></div>
+      <div class="field"><label>Descrição</label><input id="cDesc" placeholder="Ex: Aluguel de agosto" value="${c?escHtml(c.descricao):''}"></div>
       <div class="formRow">
-        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="cValor" value="${c?c.valor:''}"></div>
-        <div class="field"><label>Vencimento</label><input type="date" id="cVenc" value="${c?c.vencimento:hojeISO()}"></div>
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="cValor" value="${c?escHtml(c.valor):''}"></div>
+        <div class="field"><label>Vencimento</label><input type="date" id="cVenc" value="${c?escHtml(c.vencimento):hojeISO()}"></div>
       </div>
+      <div class="field"><label>Paciente vinculado (opcional)</label><select id="cPaciente">
+        <option value="">Nenhum / não se aplica</option>
+        ${finPacientes.map(p=>`<option value="${escHtml(p.id)}" ${c&&c.pacienteId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('')}
+      </select></div>
     </div>
     <div class="modalFoot">
-      ${c?`<button class="btn danger" onclick="excluirConta('${c.id}')">Excluir</button>`:''}
+      ${c?`<button class="btn danger" onclick="excluirConta('${escJsAttr(c.id)}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarConta(${c?`'${c.id}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarConta(${c?`'${escJsAttr(c.id)}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarConta(id){
   const desc=$('cDesc').value.trim(), valor=parseFloat($('cValor').value), venc=$('cVenc').value;
   if(!desc||!valor||!venc){showToast('Preencha descrição, valor e vencimento.','err');return;}
   const anterior=id?contasData.find(x=>x.id===id):null;
-  const obj={id:id||uid(),tipo:$('cTipo').value,descricao:desc,valor,vencimento:venc,status:anterior?anterior.status:'pendente'};
+  const obj={id:id||uid(),tipo:$('cTipo').value,descricao:desc,valor,vencimento:venc,status:anterior?anterior.status:'pendente',pacienteId:$('cPaciente')?($('cPaciente').value||null):null};
   const idx=contasData.findIndex(x=>x.id===obj.id);
   if(idx>=0) contasData[idx]=obj; else contasData.push(obj);
   await saveList('contas',contasData);
@@ -2157,7 +2216,7 @@ function exportarEstoqueCSV(){
 function pintarEstoque(){
   $('content').innerHTML=`<div class="panel">
     ${estoqueData.length?`<table class="tbl"><thead><tr><th>Item</th><th>Quantidade</th><th>Mínimo</th><th>Custo unit.</th><th></th></tr></thead><tbody>
-      ${estoqueData.map(i=>`<tr><td>${escHtml(i.nome)}</td><td class="${Number(i.qtd)<=Number(i.minimo||0)?'stockLow':''}">${escHtml(i.qtd)} ${escHtml(i.unidade||'')}</td><td>${escHtml(i.minimo||0)} ${escHtml(i.unidade||'')}</td><td class="mono">${BRL(i.custoUnitario||0)}</td>
+      ${estoqueData.map(i=>`<tr><td>${i.nome}</td><td class="${Number(i.qtd)<=Number(i.minimo||0)?'stockLow':''}">${i.qtd} ${i.unidade||''}</td><td>${i.minimo||0} ${i.unidade||''}</td><td class="mono">${BRL(i.custoUnitario||0)}</td>
         <td style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
           <button class="iconBtn" title="Entrada" onclick="ajustarEstoque('${i.id}',1)">＋</button>
           <button class="iconBtn" title="Saída" onclick="ajustarEstoque('${i.id}',-1)">－</button>
@@ -2179,21 +2238,21 @@ function abrirModalEstoque(id){
   openModal(`
     <div class="modalHead"><h3>${i?'Editar item':'Novo item de estoque'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do item</label><input id="eNome" placeholder="Ex: Luvas descartáveis (caixa)" value="${i?escHtml(i.nome):''}"></div>
+      <div class="field"><label>Nome do item</label><input id="eNome" placeholder="Ex: Luvas descartáveis (caixa)" value="${i?i.nome:''}"></div>
       <div class="formRow">
-        <div class="field"><label>Quantidade atual</label><input type="number" step="0.01" id="eQtd" value="${i?escHtml(i.qtd):0}"></div>
-        <div class="field"><label>Unidade</label><input id="eUn" placeholder="un, caixa, ml…" value="${i?escHtml(i.unidade||''):''}"></div>
+        <div class="field"><label>Quantidade atual</label><input type="number" step="0.01" id="eQtd" value="${i?i.qtd:0}"></div>
+        <div class="field"><label>Unidade</label><input id="eUn" placeholder="un, caixa, ml…" value="${i?i.unidade||'':''}"></div>
       </div>
       <div class="formRow">
-        <div class="field"><label>Estoque mínimo (alerta)</label><input type="number" step="0.01" id="eMin" value="${i?escHtml(i.minimo||0):0}"></div>
-        <div class="field"><label>Custo unitário (R$)</label><input type="number" step="0.01" id="eCusto" value="${i?escHtml(i.custoUnitario||0):0}"></div>
+        <div class="field"><label>Estoque mínimo (alerta)</label><input type="number" step="0.01" id="eMin" value="${i?i.minimo||0:0}"></div>
+        <div class="field"><label>Custo unitário (R$)</label><input type="number" step="0.01" id="eCusto" value="${i?i.custoUnitario||0:0}"></div>
       </div>
       <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px">O custo unitário é usado pra calcular automaticamente o custo dos procedimentos.</p>
     </div>
     <div class="modalFoot">
-      ${i?`<button class="btn danger" onclick="excluirEstoque('${escJsAttr(i.id)}')">Excluir</button>`:''}
+      ${i?`<button class="btn danger" onclick="excluirEstoque('${i.id}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarEstoque(${i?`'${escJsAttr(i.id)}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarEstoque(${i?`'${i.id}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarEstoque(id){
@@ -2221,18 +2280,24 @@ async function renderProcedimentos(){
   [procData,procEstoque]=await Promise.all([loadList('procedimentos'),loadList('estoque')]);
   pintarProcedimentos();
 }
-function custoProcedimento(p){ return custoInsumosProcedimento(p,procEstoque); }
-function precoSugerido(p){ return precoFinalProcedimento(p,procEstoque); }
+function custoProcedimento(p){
+  return (p.itens||[]).reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+}
+function precoSugerido(p){
+  const custo=custoProcedimento(p); const m=Number(p.margem||0);
+  if(m<=0||m>=100) return custo;
+  return custo/(1-m/100);
+}
 function pintarProcedimentos(){
   $('content').innerHTML=`<div class="panel">
-    ${procData.length?`<table class="tbl"><thead><tr><th>Procedimento</th><th>Insumos</th><th>Custo</th><th>Margem</th><th>Preço final</th><th></th></tr></thead><tbody>
+    ${procData.length?`<table class="tbl"><thead><tr><th>Procedimento</th><th>Insumos</th><th>Custo</th><th>Margem</th><th>Preço sugerido</th><th></th></tr></thead><tbody>
       ${procData.map(p=>{
-        const custo=custoProcedimento(p), final=precoSugerido(p);
-        return `<tr><td>${escHtml(p.nome)}</td><td>${(p.itens||[]).length} item(ns)</td><td class="mono">${BRL(custo)}</td><td>${escHtml(p.margem||0)}%</td>
-          <td class="mono" style="font-weight:600">${BRL(final)}</td>
-          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalProcedimento('${escJsAttr(p.id)}')">✎</button></td></tr>`;
+        const custo=custoProcedimento(p), sugerido=precoSugerido(p);
+        return `<tr><td>${p.nome}</td><td>${(p.itens||[]).length} item(ns)</td><td class="mono">${BRL(custo)}</td><td>${p.margem||0}%</td>
+          <td class="mono" style="font-weight:600">${BRL(p.precoManual||sugerido)}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalProcedimento('${p.id}')">✎</button></td></tr>`;
       }).join('')}
-    </tbody></table>`:`<div class="empty"><div class="big">Nenhum procedimento cadastrado</div>Cadastre os procedimentos com os insumos que cada um consome — o custo e o preço final são calculados sozinhos.</div>`}
+    </tbody></table>`:`<div class="empty"><div class="big">Nenhum procedimento cadastrado</div>Cadastre os procedimentos com os insumos que cada um consome — o custo e o preço sugerido são calculados sozinhos.</div>`}
   </div>`;
 }
 function abrirModalProcedimento(id){
@@ -2242,46 +2307,47 @@ function abrirModalProcedimento(id){
   renderModalProcedimento(id||null);
 }
 function renderModalProcedimento(id){
-  const draftAsProc={itens:procItensTemp,margem:procDraft.margem,precoManual:procDraft.precoManual};
-  const custo=custoInsumosProcedimento(draftAsProc,procEstoque);
-  const sugerido=precoSugeridoProcedimento(custo,procDraft.margem);
-  const precoFinal=precoFinalProcedimento(draftAsProc,procEstoque);
+  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const margem=Number(procDraft.margem||0);
+  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
+  const precoManual=Number(procDraft.precoManual||0);
+  const precoFinal = precoManual>0 ? precoManual : sugerido;
   openModal(`
     <div class="modalHead"><h3>${id?'Editar procedimento':'Novo procedimento'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele, Consulta de rotina…" value="${escHtml(procDraft.nome||'')}" onchange="procDraft.nome=this.value"></div>
+      <div class="field"><label>Nome do procedimento</label><input id="prNome" placeholder="Ex: Limpeza de pele, Consulta de rotina…" value="${procDraft.nome||''}" onchange="procDraft.nome=this.value"></div>
       <div class="field"><label>Insumos consumidos (deixe vazio se a consulta não usa material)</label>
         <div id="prItensList">${procItensTemp.map((it,idx)=>{
           const e=procEstoque.find(x=>x.id===it.estoqueId);
           return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-            <span style="flex:1;font-size:13px">${e?escHtml(e.nome):'(item removido)'}</span>
-            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${escHtml(it.qtd)} ${e?escHtml(e.unidade||''):''}</span>
-            <button class="iconBtn" onclick="removerItemProc(${idx},'${escJsAttr(id||'')}')">🗑</button>
+            <span style="flex:1;font-size:13px">${e?e.nome:'(item removido)'}</span>
+            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${it.qtd} ${e?e.unidade||'':''}</span>
+            <button class="iconBtn" onclick="removerItemProc(${idx},'${id||''}')">🗑</button>
           </div>`;
         }).join('') || '<p style="font-size:12.5px;color:var(--gray)">Nenhum insumo — tudo bem, nem toda consulta usa material.</p>'}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <select id="prItemSel" style="flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--paper)">
-            ${procEstoque.map(e=>`<option value="${escHtml(e.id)}">${escHtml(e.nome)} (${BRL(e.custoUnitario||0)}/${escHtml(e.unidade||'un')})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
+            ${procEstoque.map(e=>`<option value="${e.id}">${e.nome} (${BRL(e.custoUnitario||0)}/${e.unidade||'un'})</option>`).join('') || '<option value="">Cadastre itens no Estoque primeiro</option>'}
           </select>
           <input type="number" step="0.01" id="prItemQtd" placeholder="Qtd" value="1" style="width:80px;padding:9px 11px;border:1px solid var(--line);border-radius:7px">
-          <button class="btn sm" onclick="adicionarItemProc('${escJsAttr(id||'')}')">Adicionar</button>
+          <button class="btn sm" onclick="adicionarItemProc('${id||''}')">Adicionar</button>
         </div>
       </div>
       <div class="formRow">
-        <div class="field"><label>Margem de lucro desejada (%) — usada só quando não houver preço da consulta preenchido</label><input type="number" id="prMargem" value="${escHtml(procDraft.margem)}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
-        <div class="field"><label>Preço da consulta (seu honorário — o custo do insumo é somado a ele automaticamente)</label><input type="number" step="0.01" id="prPrecoManual" value="${escHtml(procDraft.precoManual||'')}" oninput="procDraft.precoManual=this.value;atualizarPrecoModal()" placeholder="Ex: 200"></div>
+        <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" id="prMargem" value="${margem}" oninput="procDraft.margem=this.value;atualizarPrecoModal()"></div>
+        <div class="field"><label>Preço da consulta (opcional — preenche direto se não tiver insumo)</label><input type="number" step="0.01" id="prPrecoManual" value="${procDraft.precoManual||''}" oninput="procDraft.precoManual=this.value;atualizarPrecoModal()" placeholder="Ex: 200"></div>
       </div>
-      <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${escHtml(procDraft.comissaoPct||'')}" placeholder="Ex: 30"></div>
+      <div class="field"><label>Comissão do profissional (% sobre o preço, opcional)</label><input type="number" id="prComissao" value="${procDraft.comissaoPct||''}" placeholder="Ex: 30"></div>
       <div class="card" style="background:var(--teal-soft);border:none">
         <div style="display:flex;justify-content:space-between;font-size:13px"><span>Custo dos insumos</span><b class="mono" id="prCustoView">${BRL(custo)}</b></div>
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:2px;color:var(--ink-soft)"><span>Preço sugerido (pela margem, sem consulta)</span><b class="mono" id="prSugeridoView">${BRL(sugerido)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:2px;color:var(--ink-soft)"><span>Preço sugerido (pela margem)</span><b class="mono" id="prSugeridoView">${BRL(sugerido)}</b></div>
         <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:6px;border-top:1px solid #ffffff80;padding-top:6px"><span><b>Preço final</b></span><b class="mono" id="prFinalView" style="color:var(--teal)">${BRL(precoFinal)}</b></div>
       </div>
     </div>
     <div class="modalFoot">
-      ${id?`<button class="btn danger" onclick="excluirProcedimento('${escJsAttr(id)}')">Excluir</button>`:''}
+      ${id?`<button class="btn danger" onclick="excluirProcedimento('${id}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarProcedimento(${id?`'${escJsAttr(id)}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarProcedimento(${id?`'${id}'`:'null'})">Salvar</button>
     </div>
   `);
 }
@@ -2297,10 +2363,11 @@ function removerItemProc(idx,id){
   renderModalProcedimento(id||null);
 }
 function atualizarPrecoModal(){
-  const draftAsProc={itens:procItensTemp,margem:$('prMargem').value,precoManual:$('prPrecoManual').value};
-  const custo=custoInsumosProcedimento(draftAsProc,procEstoque);
-  const sugerido=precoSugeridoProcedimento(custo,draftAsProc.margem);
-  const precoFinal=precoFinalProcedimento(draftAsProc,procEstoque);
+  const custo=procItensTemp.reduce((s,it)=>{ const e=procEstoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const margem=Number($('prMargem').value||0);
+  const sugerido = margem>0&&margem<100 ? custo/(1-margem/100) : custo;
+  const precoManual=Number($('prPrecoManual').value||0);
+  const precoFinal = precoManual>0 ? precoManual : sugerido;
   $('prCustoView').textContent=BRL(custo); $('prSugeridoView').textContent=BRL(sugerido); $('prFinalView').textContent=BRL(precoFinal);
 }
 async function salvarProcedimento(id){
@@ -2344,8 +2411,8 @@ function pintarConvenios(){
     <div class="toolbar"><span style="flex:1"></span><button class="btn primary sm" onclick="abrirModalConvenio()">+ Convênio</button></div>
     <div class="panel">
       ${conveniosData.length?`<table class="tbl"><thead><tr><th>Convênio</th><th>Registro ANS</th><th>Contato</th><th>Prazo de envio</th><th></th></tr></thead><tbody>
-        ${conveniosData.map(c=>`<tr><td>${escHtml(c.nome)}</td><td class="mono">${escHtml(c.registroAns)||'—'}</td><td>${escHtml(c.contato)||'—'}</td><td>${c.prazoEnvio?escHtml(c.prazoEnvio)+' dias':'—'}</td>
-          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalConvenio('${escJsAttr(c.id)}')">✎</button></td></tr>`).join('')}
+        ${conveniosData.map(c=>`<tr><td>${c.nome}</td><td class="mono">${c.registroAns||'—'}</td><td>${c.contato||'—'}</td><td>${c.prazoEnvio?c.prazoEnvio+' dias':'—'}</td>
+          <td style="text-align:right"><button class="iconBtn" onclick="abrirModalConvenio('${c.id}')">✎</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhum convênio cadastrado</div>Cadastre os planos de saúde que sua clínica atende.</div>`}
     </div>`;
 }
@@ -2354,17 +2421,17 @@ function abrirModalConvenio(id){
   openModal(`
     <div class="modalHead"><h3>${c?'Editar convênio':'Novo convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Nome do convênio</label><input id="cvNome" placeholder="Ex: Bradesco Saúde" value="${c?escHtml(c.nome):''}"></div>
+      <div class="field"><label>Nome do convênio</label><input id="cvNome" placeholder="Ex: Bradesco Saúde" value="${c?c.nome:''}"></div>
       <div class="formRow">
-        <div class="field"><label>Registro ANS (operadora)</label><input id="cvAns" value="${c?escHtml(c.registroAns||''):''}"></div>
-        <div class="field"><label>Prazo de envio (dias)</label><input type="number" id="cvPrazo" value="${c?escHtml(c.prazoEnvio||30):30}"></div>
+        <div class="field"><label>Registro ANS (operadora)</label><input id="cvAns" value="${c?c.registroAns||'':''}"></div>
+        <div class="field"><label>Prazo de envio (dias)</label><input type="number" id="cvPrazo" value="${c?c.prazoEnvio||30:30}"></div>
       </div>
-      <div class="field"><label>Contato / suporte</label><input id="cvContato" placeholder="Telefone, e-mail…" value="${c?escHtml(c.contato||''):''}"></div>
+      <div class="field"><label>Contato / suporte</label><input id="cvContato" placeholder="Telefone, e-mail…" value="${c?c.contato||'':''}"></div>
     </div>
     <div class="modalFoot">
-      ${c?`<button class="btn danger" onclick="excluirConvenio('${escJsAttr(c.id)}')">Excluir</button>`:''}
+      ${c?`<button class="btn danger" onclick="excluirConvenio('${c.id}')">Excluir</button>`:''}
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="salvarConvenio(${c?`'${escJsAttr(c.id)}'`:'null'})">Salvar</button>
+      <button class="btn primary" onclick="salvarConvenio(${c?`'${c.id}'`:'null'})">Salvar</button>
     </div>`);
 }
 async function salvarConvenio(id){
@@ -2392,7 +2459,7 @@ function pintarTabelaPrecos(){
     <div class="toolbar">
       <select id="tpConvenioFiltro" onchange="mudarFiltroPreco(this.value)" style="padding:9px 11px;border:1px solid var(--line);border-radius:7px">
         <option value="" ${!tabelaPrecoFiltro?'selected':''}>Todos os convênios</option>
-        ${conveniosData.map(c=>`<option value="${escHtml(c.id)}" ${tabelaPrecoFiltro===c.id?'selected':''}>${escHtml(c.nome)}</option>`).join('')}
+        ${conveniosData.map(c=>`<option value="${c.id}" ${tabelaPrecoFiltro===c.id?'selected':''}>${c.nome}</option>`).join('')}
       </select>
       <span style="flex:1"></span>
       <button class="btn primary sm" onclick="abrirModalPreco()">+ Preço</button>
@@ -2402,8 +2469,8 @@ function pintarTabelaPrecos(){
       `<table class="tbl"><thead><tr><th>Convênio</th><th>Procedimento</th><th>Código TUSS</th><th>Valor</th><th></th></tr></thead><tbody>
           ${lista.map(t=>{
             const conv=conveniosData.find(c=>c.id===t.convenioId), proc=convProcedimentos.find(p=>p.id===t.procedimentoId);
-            return `<tr><td>${conv?escHtml(conv.nome):'—'}</td><td>${proc?escHtml(proc.nome):escHtml(t.procedimentoNome)||'—'}</td><td class="mono">${escHtml(t.codigoTuss)||'—'}</td><td class="mono">${BRL(t.valor)}</td>
-              <td style="text-align:right"><button class="iconBtn" onclick="abrirModalPreco('${escJsAttr(t.id)}')">✎</button></td></tr>`;
+            return `<tr><td>${conv?conv.nome:'—'}</td><td>${proc?proc.nome:t.procedimentoNome||'—'}</td><td class="mono">${t.codigoTuss||'—'}</td><td class="mono">${BRL(t.valor)}</td>
+              <td style="text-align:right"><button class="iconBtn" onclick="abrirModalPreco('${t.id}')">✎</button></td></tr>`;
           }).join('')}
         </tbody></table>`}
     </div>`;
@@ -2413,10 +2480,10 @@ function abrirModalPreco(id){
   openModal(`
     <div class="modalHead"><h3>${t?'Editar preço':'Novo preço por convênio'}</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Convênio</label><select id="tpConvenio">${conveniosData.map(c=>`<option value="${escHtml(c.id)}" ${t&&t.convenioId===c.id?'selected':''}>${escHtml(c.nome)}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
-      <div class="field"><label>Procedimento</label><select id="tpProcedimento">${convProcedimentos.map(p=>`<option value="${escHtml(p.id)}" ${t&&t.procedimentoId===p.id?'selected':''}>${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um procedimento primeiro</option>'}</select></div>
+      <div class="field"><label>Convênio</label><select id="tpConvenio">${conveniosData.map(c=>`<option value="${c.id}" ${t&&t.convenioId===c.id?'selected':''}>${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Procedimento</label><select id="tpProcedimento">${convProcedimentos.map(p=>`<option value="${p.id}" ${t&&t.procedimentoId===p.id?'selected':''}>${p.nome}</option>`).join('')||'<option value="">Cadastre um procedimento primeiro</option>'}</select></div>
       <div class="formRow">
-        <div class="field"><label>Código TUSS</label><input id="tpCodigo" placeholder="Ex: 10101012" value="${t?escHtml(t.codigoTuss||''):''}"></div>
+        <div class="field"><label>Código TUSS</label><input id="tpCodigo" placeholder="Ex: 10101012" value="${t?t.codigoTuss||'':''}"></div>
         <div class="field"><label>Valor pago pelo convênio (R$)</label><input type="number" step="0.01" id="tpValor" value="${t?t.valor:''}"></div>
       </div>
     </div>
@@ -2459,13 +2526,13 @@ function pintarGuias(){
     </div>
     <div class="panel">
       ${guiasData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Convênio</th><th>Procedimento</th><th>Valor</th><th>Status</th><th></th></tr></thead><tbody>
-        ${[...guiasData].sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||'')).map(g=>`<tr><td>${escHtml(g.pacienteNome)}</td><td>${escHtml(g.convenioNome)}</td><td>${escHtml(g.procedimentoNome)||'—'}</td><td class="mono">${BRL(g.valor)}</td>
-          <td><span class="badge ${guiaStatusBadge(g.status)}">${guiaStatusLabel(g.status)}</span>${g.motivoGlosa?`<div style="font-size:11px;color:var(--coral);margin-top:2px">${escHtml(g.motivoGlosa)}</div>`:''}</td>
+        ${[...guiasData].sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||'')).map(g=>`<tr><td>${g.pacienteNome}</td><td>${g.convenioNome}</td><td>${g.procedimentoNome||'—'}</td><td class="mono">${BRL(g.valor)}</td>
+          <td><span class="badge ${guiaStatusBadge(g.status)}">${guiaStatusLabel(g.status)}</span>${g.motivoGlosa?`<div style="font-size:11px;color:var(--coral);margin-top:2px">${g.motivoGlosa}</div>`:''}</td>
           <td style="text-align:right;white-space:nowrap">
-            ${g.status==='rascunho'?`<button class="btn sm" onclick="enviarGuia('${escJsAttr(g.id)}')">Enviar</button>`:''}
-            ${g.status==='enviada'?`<button class="btn sm" onclick="marcarGuiaPaga('${escJsAttr(g.id)}')">Paga</button><button class="btn sm" onclick="marcarGuiaGlosada('${escJsAttr(g.id)}')">Glosa</button>`:''}
-            ${g.status==='glosada'?`<button class="btn sm" onclick="reenviarGuia('${escJsAttr(g.id)}')">Reenviar</button>`:''}
-            <button class="iconBtn" onclick="excluirGuia('${escJsAttr(g.id)}')">🗑</button>
+            ${g.status==='rascunho'?`<button class="btn sm" onclick="enviarGuia('${g.id}')">Enviar</button>`:''}
+            ${g.status==='enviada'?`<button class="btn sm" onclick="marcarGuiaPaga('${g.id}')">Paga</button><button class="btn sm" onclick="marcarGuiaGlosada('${g.id}')">Glosa</button>`:''}
+            ${g.status==='glosada'?`<button class="btn sm" onclick="reenviarGuia('${g.id}')">Reenviar</button>`:''}
+            <button class="iconBtn" onclick="excluirGuia('${g.id}')">🗑</button>
           </td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhuma guia gerada</div>Crie uma guia vinculada a um atendimento de convênio.</div>`}
     </div>`;
@@ -2480,10 +2547,10 @@ function abrirModalGuia(){
   openModal(`
     <div class="modalHead"><h3>Nova guia (TISS)</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Convênio</label><select id="gvConvenio">${conveniosData.map(c=>`<option value="${escHtml(c.id)}">${escHtml(c.nome)}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
-      <div class="field"><label>Paciente</label><select id="gvPaciente">${convPacientes.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Convênio</label><select id="gvConvenio">${conveniosData.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('')||'<option value="">Cadastre um convênio primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="gvPaciente">${convPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="field"><label>Procedimento</label><select id="gvProcedimento" onchange="preencherValorGuia()">
-        <option value="">Selecione</option>${convProcedimentos.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')}
+        <option value="">Selecione</option>${convProcedimentos.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')}
       </select></div>
       <div class="field"><label>Valor da guia (R$)</label><input type="number" step="0.01" id="gvValor"></div>
     </div>
@@ -2577,8 +2644,8 @@ async function pintarMarketingInativos(){
     </div>
     <div class="panel">
       ${inativos.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Última consulta</th><th></th></tr></thead><tbody>
-        ${inativos.map(p=>`<tr><td>${escHtml(p.nome)}</td><td class="mono">${escHtml(p.telefone)}</td><td>${ultimaPorPaciente[p.id]?fmtData(ultimaPorPaciente[p.id]):'Nunca veio'}</td>
-          <td style="text-align:right"><button class="btn sm" onclick="reativarPaciente('${escJsAttr(p.id)}','${escJsAttr(p.nome)}','${escJsAttr(p.telefone)}')">Enviar mensagem</button></td></tr>`).join('')}
+        ${inativos.map(p=>`<tr><td>${p.nome}</td><td class="mono">${p.telefone}</td><td>${ultimaPorPaciente[p.id]?fmtData(ultimaPorPaciente[p.id]):'Nunca veio'}</td>
+          <td style="text-align:right"><button class="btn sm" onclick="reativarPaciente('${p.id}','${p.nome.replace(/'/g,"\\'")}','${p.telefone}')">Enviar mensagem</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Ninguém na lista</div>Todo mundo teve consulta recentemente, ou ninguém tem telefone cadastrado.</div>`}
     </div>
     ${inativos.length?`<div class="toolbar" style="margin-top:14px"><button class="btn primary" onclick="reativarTodos()">Disparar campanha pra todos os ${inativos.length}</button></div>`:''}
@@ -2626,7 +2693,7 @@ async function pintarMarketingNPS(){
     <div class="panel">
       <div class="panelHead"><h2>Comentários recentes</h2></div>
       ${avaliacoes.length?`<table class="tbl"><thead><tr><th>Data</th><th>Nota</th><th>Comentário</th></tr></thead><tbody>
-        ${avaliacoes.slice(0,50).map(a=>`<tr><td class="mono">${fmtDataHora(a.created_at||a.payload.criadoEm)}</td><td><b>${escHtml(a.payload.nota)}</b></td><td>${escHtml(a.payload.comentario)||'—'}</td></tr>`).join('')}
+        ${avaliacoes.slice(0,50).map(a=>`<tr><td class="mono">${fmtDataHora(a.created_at||a.payload.criadoEm)}</td><td><b>${a.payload.nota}</b></td><td>${a.payload.comentario||'—'}</td></tr>`).join('')}
       </tbody></table>`:`<div class="empty"><div class="big">Nenhuma avaliação ainda</div>Use o botão ⭐ num agendamento atendido pra pedir uma avaliação ao paciente.</div>`}
     </div>`;
 }
@@ -2651,10 +2718,9 @@ async function initPublicRoute(){
   return true;
 }
 function publicoShell(titulo,corpoHTML,nomeClinica,logo){
-  const logoOk=/^data:image\/(png|jpeg|webp|svg\+xml);base64,[a-zA-Z0-9+/=]+$/.test(logo||'');
   return `<div id="gate" style="display:flex"><div class="gateCard">
-    <div class="gateLogo"><div class="mark">${logoOk?`<img src="${escHtml(logo)}">`:'A+'}</div><div class="name">${escHtml(nomeClinica||'Agenda+')}</div></div>
-    <h3 class="disp" style="margin:0 0 10px">${escHtml(titulo)}</h3>
+    <div class="gateLogo"><div class="mark">${logo?`<img src="${logo}">`:'A+'}</div><div class="name">${nomeClinica||'Agenda+'}</div></div>
+    <h3 class="disp" style="margin:0 0 10px">${titulo}</h3>
     ${corpoHTML}
   </div></div>`;
 }
@@ -2669,61 +2735,21 @@ async function renderPublicoAgendar(codigo){
   const cli=await dadosClinicaPublica(codigo);
   if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
   el.innerHTML=publicoShell('Marque sua consulta',`
-    <p class="gateTitle">Preencha seus dados e escolha um horário livre — a recepção confirma a solicitação em seguida.</p>
+    <p class="gateTitle">Preencha seus dados — a recepção confirma o melhor horário com você em seguida.</p>
     <label class="gateLab">Seu nome completo</label><input class="gateInp" id="pbNome">
     <label class="gateLab">WhatsApp</label><input class="gateInp" id="pbTel" placeholder="(11) 99999-9999">
-    <label class="gateLab">Dia desejado</label><input class="gateInp" type="date" id="pbData" min="${hojeISO()}" onchange="atualizarSlotsPublico('${codigo}')">
-    <label class="gateLab">Horário</label><select class="gateInp" id="pbHora" disabled><option value="">Escolha o dia primeiro</option></select>
+    <label class="gateLab">Dia desejado</label><input class="gateInp" type="date" id="pbData" min="${hojeISO()}">
+    <label class="gateLab">Horário aproximado</label><input class="gateInp" type="time" id="pbHora">
     <label class="gateLab">Motivo / observação</label><textarea class="gateInp" id="pbObs" rows="3"></textarea>
     <button class="gateBtn" onclick="enviarSolicitacaoAgendamento('${codigo}')">Enviar solicitação</button>
     <div class="gateError" id="pbErr"></div>
     <div id="pbOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Solicitação enviada! A clínica confirma com você em breve.</div>
   `,cli&&cli.nome,cli&&cli.logo);
 }
-/* Slots de meia em meia hora dentro do horário de funcionamento (HORA_INI/HORA_FIM, já usados na
-   Agenda interna). É uma simplificação: se a clínica tem horários fora da grade de 30min, esses não
-   aparecem aqui — mas cobre o caso comum e nunca deixa marcar em cima de um horário já ocupado. */
-function slotsPublicosDoDia(){
-  const out=[];
-  for(let h=HORA_INI;h<HORA_FIM;h++){ out.push(String(h).padStart(2,'0')+':00'); out.push(String(h).padStart(2,'0')+':30'); }
-  return out;
-}
-async function horariosOcupadosPublicos(codigo,data){
-  if(!data||!sb) return [];
-  try{
-    const {data:ocupados,error}=await sb.rpc('horarios_ocupados_publicos',{codigo_grp:codigo,dia:data});
-    if(error) throw error;
-    return ocupados||[];
-  }catch(e){ return []; }
-}
-async function atualizarSlotsPublico(codigo){
-  const data=$('pbData').value;
-  const sel=$('pbHora'); if(!sel) return;
-  const anterior=sel.value;
-  if(!data){ sel.innerHTML='<option value="">Escolha o dia primeiro</option>'; sel.disabled=true; return; }
-  sel.disabled=true; sel.innerHTML='<option value="">Carregando horários…</option>';
-  const ocupados=await horariosOcupadosPublicos(codigo,data);
-  const slots=slotsPublicosDoDia();
-  sel.innerHTML='<option value="">Escolha um horário</option>'+slots.map(h=>{
-    const ocupado=ocupados.includes(h);
-    return `<option value="${h}" ${ocupado?'disabled':''} ${(!ocupado&&h===anterior)?'selected':''}>${h}${ocupado?' — indisponível':''}</option>`;
-  }).join('');
-  sel.disabled=false;
-}
 async function enviarSolicitacaoAgendamento(codigo){
   const nome=$('pbNome').value.trim(), tel=$('pbTel').value.trim(), data=$('pbData').value, hora=$('pbHora').value, obs=$('pbObs').value.trim();
   const err=$('pbErr'); err.style.display='none';
   if(!nome||!tel){ err.textContent='Preencha nome e WhatsApp.'; err.style.display='block'; return; }
-  if(!data||!hora){ err.textContent='Escolha o dia e o horário.'; err.style.display='block'; return; }
-  /* Checagem de última hora: outra pessoa pode ter marcado esse horário enquanto este formulário
-     estava aberto na tela. Confere de novo bem antes de enviar, pra nunca deixar passar. */
-  const ocupadosAgora=await horariosOcupadosPublicos(codigo,data);
-  if(ocupadosAgora.includes(hora)){
-    err.textContent='Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário.';
-    err.style.display='block';
-    await atualizarSlotsPublico(codigo);
-    return;
-  }
   const r=await publicInsert(codigo,'agendamento',{nome,telefone:tel,data,hora,obs,criadoEm:new Date().toISOString()});
   if(!r.ok&&!r.demo){ err.textContent='Não consegui enviar agora. Tente de novo em instantes.'; err.style.display='block'; return; }
   document.querySelectorAll('#publico .gateInp,#publico .gateBtn').forEach(e=>e.style.display='none');
@@ -2739,14 +2765,14 @@ async function pintarFilaEspera(){
     <div class="panel" style="margin-bottom:16px">
       <div class="panelHead"><h2>Solicitações de agendamento online</h2><span class="tag">${pendentes.length} pendente(s)</span></div>
       ${pendentes.length?`<table class="tbl"><thead><tr><th>Nome</th><th>Telefone</th><th>Dia/horário desejado</th><th>Observação</th><th></th></tr></thead><tbody>
-        ${pendentes.map(s=>`<tr><td>${escHtml(s.payload.nome)}</td><td class="mono">${escHtml(s.payload.telefone)}</td><td>${s.payload.data?fmtData(s.payload.data):'—'} ${escHtml(s.payload.hora)}</td><td>${escHtml(s.payload.obs)||'—'}</td>
-          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="aprovarSolicitacaoAgendamento('${escJsAttr(s.id)}')">Aprovar</button> <button class="iconBtn" onclick="recusarSolicitacaoAgendamento('${escJsAttr(s.id)}')">🗑</button></td></tr>`).join('')}
+        ${pendentes.map(s=>`<tr><td>${s.payload.nome}</td><td class="mono">${s.payload.telefone}</td><td>${s.payload.data?fmtData(s.payload.data):'—'} ${s.payload.hora||''}</td><td>${s.payload.obs||'—'}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="aprovarSolicitacaoAgendamento('${s.id}')">Aprovar</button> <button class="iconBtn" onclick="recusarSolicitacaoAgendamento('${s.id}')">🗑</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Nenhuma solicitação pendente.</div>`}
     </div>
     <div class="panel">
       <div class="panelHead"><h2>Fila de espera (encaixe)</h2><button class="btn sm" onclick="abrirModalFila()">+ Adicionar</button></div>
       ${filaEsperaData.length?`<table class="tbl"><thead><tr><th>Paciente</th><th>Preferência</th><th></th></tr></thead><tbody>
-        ${filaEsperaData.map(f=>`<tr><td>${escHtml(f.pacienteNome)}</td><td>${escHtml(f.preferencia)||'—'}</td>
+        ${filaEsperaData.map(f=>`<tr><td>${f.pacienteNome}</td><td>${f.preferencia||'—'}</td>
           <td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="notificarFila('${f.id}')">Notificar vaga</button> <button class="iconBtn" onclick="removerDaFila('${f.id}')">🗑</button></td></tr>`).join('')}
       </tbody></table>`:`<div class="empty">Ninguém na fila de espera.</div>`}
     </div>`;
@@ -2754,22 +2780,12 @@ async function pintarFilaEspera(){
 async function aprovarSolicitacaoAgendamento(id){
   const lista=await loadSolicitacoes('agendamento');
   const s=lista.find(x=>x.id===id); if(!s) return;
-  const dataDesejada=s.payload.data||hojeISO(), horaDesejada=s.payload.hora||'09:00';
-  /* Reconfere contra a agenda de verdade (não confia só no que a página pública viu na hora do
-     envio) — pode ter passado tempo entre o pedido e a aprovação, e outra solicitação/encaixe pode
-     ter ocupado esse horário nesse meio-tempo. Nunca cria em cima de um horário já tomado. */
-  agendaData=await loadList('agendamentos');
-  const conflito=agendaData.some(a=>a.data===dataDesejada&&a.hora===horaDesejada&&a.status!=='cancelado');
-  if(conflito){
-    showToast(`Esse horário (${fmtData(dataDesejada)} ${horaDesejada}) já está ocupado na agenda. Abra a solicitação e escolha outro horário antes de aprovar.`,'err');
-    return;
-  }
   let pac=agendaPacientes.find(p=>soDigitos(p.telefone)===soDigitos(s.payload.telefone));
   if(!pac){
     pac={id:uid(),nome:s.payload.nome,telefone:s.payload.telefone,nascimento:'',obs:'Cadastrado via agendamento online.'};
     agendaPacientes.push(pac); await saveList('pacientes',agendaPacientes);
   }
-  const novo={id:uid(),pacienteId:pac.id,pacienteNome:pac.nome,telefone:pac.telefone,data:dataDesejada,hora:horaDesejada,
+  const novo={id:uid(),pacienteId:pac.id,pacienteNome:pac.nome,telefone:pac.telefone,data:s.payload.data||hojeISO(),hora:s.payload.hora||'09:00',
     tipo:'Solicitado online',profissional:'',obs:s.payload.obs||'',status:'agendado',baixaFeita:false};
   agendaData.push(novo); await saveList('agendamentos',agendaData);
   await atualizarSolicitacao(id,'aprovada');
@@ -2785,7 +2801,7 @@ function abrirModalFila(){
   openModal(`
     <div class="modalHead"><h3>Adicionar à fila de espera</h3><button class="modalX" onclick="closeModal()">&times;</button></div>
     <div class="modalBody">
-      <div class="field"><label>Paciente</label><select id="flPaciente">${agendaPacientes.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nome)}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
+      <div class="field"><label>Paciente</label><select id="flPaciente">${agendaPacientes.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')||'<option value="">Cadastre um paciente primeiro</option>'}</select></div>
       <div class="field"><label>Preferência (dia/período)</label><input id="flPref" placeholder="Ex: qualquer manhã esta semana"></div>
     </div>
     <div class="modalFoot"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="salvarFila()">Adicionar</button></div>
@@ -2834,17 +2850,17 @@ async function renderPublicoConsentir(token){
   if(cli&&cli.cor){ document.documentElement.style.setProperty('--teal',cli.cor); document.documentElement.style.setProperty('--teal-soft',`color-mix(in srgb, ${cli.cor} 16%, white)`); }
   const d=registro.dados;
   el.innerHTML=publicoShell('Confirmar autorização (LGPD)',`
-    <p class="gateTitle" style="margin-bottom:10px">Olá, ${d.pacienteNome}. Leia o termo abaixo e assine pra autorizar o uso dos seus dados de saúde por ${d.clinicaNome||'esta clínica'}.</p>
-    <textarea readonly rows="5" class="gateInp" style="font-size:12.5px;color:var(--ink-soft);resize:none">${d.termo}</textarea>
+    <p class="gateTitle" style="margin-bottom:10px">Olá, ${escHtml(d.pacienteNome)}. Leia o termo abaixo e assine pra autorizar o uso dos seus dados de saúde por ${escHtml(d.clinicaNome||'esta clínica')}.</p>
+    <textarea readonly rows="5" class="gateInp" style="font-size:12.5px;color:var(--ink-soft);resize:none">${escHtml(d.termo)}</textarea>
     <label class="gateLab" style="margin-top:14px">Seu nome completo</label>
-    <input class="gateInp" id="pcNome" value="${d.pacienteNome}">
+    <input class="gateInp" id="pcNome" value="${escHtml(d.pacienteNome)}">
     <label style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin:12px 0">
       <input type="checkbox" id="pcCheck" style="width:auto;margin-top:2px"> Li e concordo com o termo acima.
     </label>
     <label class="gateLab">Assinatura (desenhe com o dedo)</label>
     <canvas id="assinaturaCanvas" style="width:100%;height:150px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;display:block"></canvas>
     <button class="btn sm" style="margin-top:8px" onclick="limparAssinatura()">Limpar</button>
-    <button class="gateBtn" id="pcSubmitBtn" style="margin-top:14px" onclick="enviarConsentimentoPublico('${registro.grp}','${registro.paciente_id}',${JSON.stringify(token)})">Confirmar autorização</button>
+    <button class="gateBtn" id="pcSubmitBtn" style="margin-top:14px" onclick="enviarConsentimentoPublico('${escJsAttr(registro.grp)}','${escJsAttr(registro.paciente_id)}','${escJsAttr(token)}')">Confirmar autorização</button>
     <div class="gateError" id="pcErr"></div>
     <div id="pcOk" style="display:none;background:var(--teal-soft);color:var(--teal);border-radius:8px;padding:12px;margin-top:14px;font-size:13px">Assinatura enviada! A clínica confirma o recebimento em breve.</div>
   `,cli&&cli.nome,cli&&cli.logo);
@@ -2858,9 +2874,9 @@ async function enviarConsentimentoPublico(grp,pacienteId,token){
   if(!assinaturaTemTraco){ err.textContent='Assine no campo acima antes de confirmar.'; err.style.display='block'; return; }
   const btn=$('pcSubmitBtn');
   if(btn){ btn.disabled=true; btn.textContent='Enviando…'; }
-  /* Envolvido em try/catch de propósito: antes, qualquer erro inesperado aqui (rede, canvas,
-     Supabase) travava a tela sem nenhum aviso — parecia que o botão "não fazia nada". Agora todo
-     erro aparece pro paciente (e dá pra tentar de novo) em vez de falhar em silêncio. */
+  /* Envolvido em try/catch de propósito: um erro inesperado aqui (rede, canvas, Supabase) travava a
+     tela sem nenhum aviso — parecia que o botão "não fazia nada". Agora todo erro aparece pro
+     paciente (e dá pra tentar de novo) em vez de falhar em silêncio. */
   try{
     const cv=$('assinaturaCanvas');
     const r=await publicInsert(grp,'consentimento_lgpd',{pacienteId,nome,assinaturaData:cv.toDataURL('image/png'),dataHora:new Date().toISOString()});
@@ -2886,15 +2902,6 @@ async function gerarLinkConsentimento(pacienteId,pacienteNome){
   const token=await publicarPortalPaciente(pacienteId,{tipo:'consentimento',pacienteNome,clinicaNome:cfg.nomeExibicao||clinicaNome,termo},15);
   const url=new URL(location.href); url.search=''; url.searchParams.set('public','consentir'); url.searchParams.set('token',token);
   return url.toString();
-}
-async function enviarLinkConsentimentoWhats(pacienteId){
-  const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
-  if(!p.telefone){ showToast('Este paciente não tem telefone cadastrado. Cadastre ou copie o link manualmente.','err'); return; }
-  const link=await gerarLinkConsentimento(pacienteId,p.nome);
-  if(!link) return;
-  const msg=`Olá, ${p.nome}! Para continuarmos seu atendimento, confirme a autorização de uso dos seus dados de saúde (LGPD) neste link: ${link}\n\nLeva menos de um minuto.`;
-  window.open(waLink(p.telefone,msg),'_blank');
-  await registrarAuditoria('Gerou link de assinatura LGPD (WhatsApp)',p.nome);
 }
 async function enviarLinkConsentimentoEmail(pacienteId){
   const p=pacientesData.find(x=>x.id===pacienteId); if(!p) return;
@@ -3004,8 +3011,8 @@ async function renderRelatorios(){
   }]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
 
   const mesAtualComissao=hojeISO().slice(0,7);
-  const custoProc=p=>custoInsumosProcedimento(p,estoque);
-  const precoProc=p=>precoFinalProcedimento(p,estoque);
+  const custoProc=p=>(p.itens||[]).reduce((s,it)=>{ const e=estoque.find(x=>x.id===it.estoqueId); return s+(e?Number(e.custoUnitario||0)*Number(it.qtd||0):0); },0);
+  const precoProc=p=>{ const c=custoProc(p); const m=Number(p.margem||0); return p.precoManual||((m>0&&m<100)?c/(1-m/100):c); };
   const porProf={};
   agend.filter(a=>a.status==='atendido'&&a.data.slice(0,7)===mesAtualComissao&&a.procedimentoId).forEach(a=>{
     const proc=procs.find(p=>p.id===a.procedimentoId); if(!proc||!proc.comissaoPct) return;
